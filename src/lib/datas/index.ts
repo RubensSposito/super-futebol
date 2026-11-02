@@ -1,0 +1,15 @@
+export {
+  dataDentroDosLimites,
+  calcularDiasAteJogo,
+  deslocarDataLocal,
+  formatarCabecalhoData,
+  formatarDataCurta,
+  formatarFaixaStatusJogo,
+  obterDataInicialAgenda,
+  obterJogoAtivo,
+  obterDataJogoAnterior,
+  obterDataJogoSeguinte,
+  obterDiaDaSemana,
+  obterLimiteDataFutura,
+  obterDataLocal,
+} from "./dataLocal";

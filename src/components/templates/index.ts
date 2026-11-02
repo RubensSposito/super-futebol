@@ -1,0 +1,1 @@
+export { TelaBase } from "./TelaBase";

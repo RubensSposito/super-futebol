@@ -1,0 +1,1 @@
+export { lerListaJogadores } from "./lerListaJogadores";

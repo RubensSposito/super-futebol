@@ -7,6 +7,20 @@ export function formatarMoedaPtBr(centavos: number): string {
   return `${centavos < 0 ? "-" : ""}R$ ${reais},${fracao}`;
 }
 
+/**
+ * Aplica máscara de moeda brasileira (R$ 0,00) em tempo real conforme o usuário digita.
+ * Se o campo for limpo, retorna string vazia.
+ */
+export function mascararMoedaAoDigitar(valor: string): string {
+  const digitos = valor.replace(/\D/g, "");
+  if (!digitos) return "";
+
+  const centavos = parseInt(digitos, 10);
+  if (isNaN(centavos) || centavos === 0) return "";
+
+  return formatarMoedaPtBr(centavos);
+}
+
 export function lerMoedaPtBr(valor: string): number | null {
   const texto = valor.trim().replace(/^R\$\s*/i, "").replace(/\s/g, "");
   if (!texto) return null;

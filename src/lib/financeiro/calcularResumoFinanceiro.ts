@@ -107,6 +107,81 @@ export function calcularSaldoMensalistas(
   );
 }
 
+export type ResumoCicloMensal = {
+  arrecadadoCentavos: number;
+  saldoCentavos: number;
+  quantidadePagantes: number;
+  quantidadePendentes: number;
+  mensalistasParaCobrirQuadra: number | null;
+  previsaoTodosPagandoCentavos: number;
+};
+
+export function calcularResumoCicloMensal(
+  pagamentosCentavos: readonly number[],
+  mensalistasCadastrados: number,
+  mensalidadeAtualCentavos: number | null,
+  valorQuadraCentavos: number,
+): ResumoCicloMensal {
+  if (!Number.isSafeInteger(mensalistasCadastrados) || mensalistasCadastrados < 0) {
+    throw new RangeError("Quantidade de mensalistas inválida.");
+  }
+  if (!Number.isSafeInteger(valorQuadraCentavos) || valorQuadraCentavos < 0) {
+    throw new RangeError("Valor da quadra inválido.");
+  }
+  const arrecadadoCentavos = pagamentosCentavos.reduce((total, valor) => {
+    if (!Number.isSafeInteger(valor) || valor < 0 || !Number.isSafeInteger(total + valor)) {
+      throw new RangeError("Pagamento de mensalidade inválido.");
+    }
+    return total + valor;
+  }, 0);
+  const saldoCentavos = arrecadadoCentavos - valorQuadraCentavos;
+  const quantidadePagantes = Math.min(pagamentosCentavos.length, mensalistasCadastrados);
+  const faltantes = Math.max(0, mensalistasCadastrados - quantidadePagantes);
+  const mensalistasParaCobrirQuadra =
+    mensalidadeAtualCentavos === null || mensalidadeAtualCentavos === 0
+      ? null
+      : calcularMensalistasNecessarios(saldoCentavos, mensalidadeAtualCentavos);
+  const previsaoTodosPagandoCentavos =
+    mensalidadeAtualCentavos === null
+      ? saldoCentavos
+      : calcularSaldoTotal(
+          calcularArrecadacaoMensalistas(mensalistasCadastrados, mensalidadeAtualCentavos),
+          valorQuadraCentavos,
+        );
+  return {
+    arrecadadoCentavos,
+    saldoCentavos,
+    quantidadePagantes,
+    quantidadePendentes: faltantes,
+    mensalistasParaCobrirQuadra,
+    previsaoTodosPagandoCentavos,
+  };
+}
+
+export function calcularResumoCicloComAvulsos(
+  pagamentosMensalistasCentavos: readonly number[],
+  mensalistasCadastrados: number,
+  mensalidadeCentavos: number | null,
+  pagamentosAvulsosCentavos: readonly number[],
+  valorQuadraCentavos: number,
+): { arrecadadoCentavos: number; saldoCentavos: number; quantidadePagamentosAvulsos: number } {
+  const mensalistas = calcularResumoCicloMensal(pagamentosMensalistasCentavos, mensalistasCadastrados, mensalidadeCentavos, valorQuadraCentavos);
+  const avulsos = pagamentosAvulsosCentavos.reduce((total, valor) => {
+    if (!Number.isSafeInteger(valor) || valor < 0 || !Number.isSafeInteger(total + valor)) throw new RangeError("Pagamento de avulso inválido.");
+    return total + valor;
+  }, 0);
+  const arrecadadoCentavos = mensalistas.arrecadadoCentavos + avulsos;
+  if (!Number.isSafeInteger(arrecadadoCentavos)) throw new RangeError("Arrecadação do ciclo excede o limite seguro.");
+  return { arrecadadoCentavos, saldoCentavos: calcularSaldoTotal(arrecadadoCentavos, valorQuadraCentavos), quantidadePagamentosAvulsos: pagamentosAvulsosCentavos.length };
+}
+
+export function calcularPagamentosAvulsoNecessarios(saldoCentavos: number, valorAvulsoCentavos: number | null): number | null {
+  if (valorAvulsoCentavos === null || valorAvulsoCentavos === 0) return null;
+  validarQuantidadeEValor(1, valorAvulsoCentavos, "Pagamentos de avulso necessários");
+  if (!Number.isSafeInteger(saldoCentavos)) throw new RangeError("Saldo inválido.");
+  return saldoCentavos >= 0 ? 0 : Math.ceil(Math.abs(saldoCentavos) / valorAvulsoCentavos);
+}
+
 export function calcularJogosPorMes(
   frequencia: FrequenciaFutebol | null,
   diasSemana: readonly number[],
@@ -236,10 +311,24 @@ export function calcularAvulsosNecessarios(
 }
 
 export function calcularAvulsoSugeridoCentavos(
-  valorQuadraCentavos: number,
-  totalJogadores: number,
+  mensalidadeSugeridaCentavos: number,
+  jogosPorMes = 4,
 ): number {
-  return calcularMensalidadeCentavos(valorQuadraCentavos, totalJogadores);
+  if (
+    !Number.isSafeInteger(mensalidadeSugeridaCentavos) ||
+    mensalidadeSugeridaCentavos <= 0
+  ) {
+    return 0;
+  }
+  const jogos = Math.max(1, jogosPorMes);
+  // Valor de 1 jogo avulso dentro da mensalidade
+  const valorUmJogoMensalista = mensalidadeSugeridaCentavos / jogos;
+  // Sugere 20% acima do jogo do mensalista (proporção entre 10% e 30%)
+  const valorComProporcao = valorUmJogoMensalista * 1.2;
+  // Arredonda para o real mais próximo para cima
+  const arredondado = Math.ceil(valorComProporcao / 100) * 100;
+  // O avulso joga só 1 vez, então nunca pode ser maior do que a mensalidade inteira
+  return Math.min(mensalidadeSugeridaCentavos, arredondado);
 }
 
 export function calcularResumoFinanceiro(
@@ -248,6 +337,7 @@ export function calcularResumoFinanceiro(
   quantidadeAvulsos: number,
   mensalidadeEscolhidaCentavos: number | null,
   avulsoEscolhidoCentavos: number | null,
+  jogosPorMes = 4,
 ): ResumoFinanceiro {
   const totalJogadores = quantidadeMensalistas + quantidadeAvulsos;
   if (
@@ -261,10 +351,19 @@ export function calcularResumoFinanceiro(
     valorQuadraCentavos,
     quantidadeMensalistas,
   );
-  const avulsoSugeridoCentavos = calcularAvulsoSugeridoCentavos(
-    valorQuadraCentavos,
-    totalJogadores,
-  );
+  const avulsoSugeridoCentavos = quantidadeAvulsos > 0
+    ? Math.min(
+        mensalidadeSugeridaCentavos,
+        Math.ceil(
+          valorQuadraCentavos /
+            (quantidadeMensalistas + quantidadeAvulsos) /
+            100,
+        ) * 100,
+      )
+    : calcularAvulsoSugeridoCentavos(
+        mensalidadeSugeridaCentavos,
+        jogosPorMes,
+      );
   const mensalidadeSugeridaTotalCentavos = calcularArrecadacaoMensalistas(
     quantidadeMensalistas,
     mensalidadeSugeridaCentavos,

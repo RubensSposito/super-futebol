@@ -1,5 +1,5 @@
 import type {
-  Futebol,
+  FutebolNovo,
   Nivel,
   NovoJogador,
   Posicao,
@@ -12,6 +12,7 @@ import {
   validarNovoJogador,
 } from "@/lib/jogadores";
 import { getDb } from "./conexao";
+import { nomeNormalizadoFutebol, normalizarNomeFutebol } from "@/lib/futebols";
 import { executarComResultado } from "./resultadoBanco";
 
 const TIPOS_JOGADOR: readonly TipoJogador[] = ["goleiro", "linha"];
@@ -43,42 +44,17 @@ const CONTROLES_PAGAMENTO = [
 ] as const;
 const FREQUENCIAS = ["semanal", "quinzenal", "mensal"] as const;
 const SQL_SALVAR_FUTEBOL = `INSERT INTO futebol
-  (id, quantidade_jogadores, quantidade_mensalistas, quantidade_avulsos,
+  (nome, nome_normalizado, quantidade_jogadores, quantidade_mensalistas, quantidade_avulsos,
    tipo_cadastro, controla_presenca, controle_pagamento,
+   vencimento_quadra, jogadores_por_time, quantidade_times,
    valor_quadra_centavos, mensalidade_centavos,
    mensalidade_sugerida_centavos, avulso_escolhido_centavos,
    avulso_sugerido_centavos, nome_quadra, endereco, dias_semana,
-   frequencia, horario, data_criacao)
- VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
- ON CONFLICT(id) DO UPDATE SET
-   quantidade_jogadores = excluded.quantidade_jogadores,
-   quantidade_mensalistas = excluded.quantidade_mensalistas,
-   quantidade_avulsos = excluded.quantidade_avulsos,
-   tipo_cadastro = excluded.tipo_cadastro,
-   controla_presenca = excluded.controla_presenca,
-   controle_pagamento = excluded.controle_pagamento,
-   valor_quadra_centavos = excluded.valor_quadra_centavos,
-   mensalidade_centavos = excluded.mensalidade_centavos,
-   mensalidade_sugerida_centavos = excluded.mensalidade_sugerida_centavos,
-   avulso_escolhido_centavos = excluded.avulso_escolhido_centavos,
-   avulso_sugerido_centavos = excluded.avulso_sugerido_centavos,
-   nome_quadra = excluded.nome_quadra,
-   endereco = excluded.endereco,
-   dias_semana = excluded.dias_semana,
-   frequencia = excluded.frequencia,
-   horario = excluded.horario,
-   data_criacao = excluded.data_criacao`;
+   frequencia, horario, data_criacao, ultimo_aberto_em)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 const SQL_SALVAR_JOGADOR = `INSERT INTO jogadores
-  (nome, nome_normalizado, tipo, posicao, nivel, vinculo, data_criacao)
- VALUES (?, ?, ?, ?, ?, ?, ?)
- ON CONFLICT(nome_normalizado) DO UPDATE SET
-   nome = excluded.nome,
-   tipo = excluded.tipo,
-   posicao = excluded.posicao,
-   nivel = excluded.nivel,
-   vinculo = excluded.vinculo`;
-const SQL_MARCAR_SETUP_CONCLUIDO =
-  "INSERT INTO app_config (key, value) VALUES ('setup_done', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+  (futebol_id, nome, nome_normalizado, tipo, posicao, nivel, vinculo, data_criacao)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?) `;
 
 function validarInteiro(
   valor: number,
@@ -115,7 +91,7 @@ function normalizarTextoOpcional(
   return valor.trim() || null;
 }
 
-function normalizarFutebol(futebol: Futebol): Futebol {
+function normalizarFutebol(futebol: FutebolNovo): FutebolNovo {
   if (!TIPOS_CADASTRO.includes(futebol.tipoCadastro)) {
     throw new TypeError("Tipo de cadastro inválido.");
   }
@@ -125,6 +101,11 @@ function normalizarFutebol(futebol: Futebol): Futebol {
   if (typeof futebol.controlaPresenca !== "boolean") {
     throw new TypeError("Controle de presença inválido.");
   }
+  const nome = normalizarNomeFutebol(futebol.nome);
+  if (nome.length < 2 || nome.length > 40) throw new RangeError("O nome deve ter entre 2 e 40 caracteres.");
+  if (futebol.vencimentoQuadra !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(futebol.vencimentoQuadra)) throw new TypeError("Vencimento da quadra inválido.");
+  if (futebol.jogadoresPorTime !== null) validarInteiro(futebol.jogadoresPorTime, "Jogadores por time", 2, 22);
+  if (futebol.quantidadeTimes !== null) validarInteiro(futebol.quantidadeTimes, "Quantidade de times", 2, 12);
   if (
     futebol.frequencia != null &&
     !FREQUENCIAS.includes(futebol.frequencia)
@@ -192,8 +173,9 @@ function normalizarFutebol(futebol: Futebol): Futebol {
     throw new RangeError("As quantidades de jogadores não correspondem ao cadastro.");
   }
 
-  const normalizado: Futebol = {
+  const normalizado: FutebolNovo = {
     ...futebol,
+    nome,
     quantidadeJogadores,
     quantidadeMensalistas,
     quantidadeAvulsos,
@@ -236,6 +218,7 @@ function normalizarFutebol(futebol: Futebol): Futebol {
     (normalizado.controlePagamento !== "nenhum" &&
       normalizado.valorQuadraCentavos === null) ||
     (controlaMensalistas && normalizado.mensalidadeCentavos === null) ||
+    (controlaMensalistas && !normalizado.vencimentoQuadra) ||
     (controlaAvulsos && normalizado.avulsoEscolhidoCentavos === null)
   ) {
     throw new RangeError("Os dados financeiros não correspondem ao cadastro.");
@@ -309,9 +292,9 @@ async function executarEtapa<T>(
 }
 
 export function concluirCadastroCompleto(
-  futebol: Futebol,
+  futebol: FutebolNovo,
   jogadores: readonly NovoJogador[],
-): Promise<ResultadoBanco<void>> {
+): Promise<ResultadoBanco<number>> {
   return executarComResultado(
     "Concluir cadastro",
     "Não foi possível concluir o cadastro. Tente novamente.",
@@ -319,14 +302,25 @@ export function concluirCadastroCompleto(
       const futebolNormalizado = normalizarFutebol(futebol);
       const jogadoresNormalizados = normalizarJogadores(jogadores);
       const db = await getDb();
+      let futebolId = 0;
       await db.withTransactionAsync(async () => {
+        const duplicado = await db.getFirstAsync<{ id: number }>(
+          "SELECT id FROM futebol WHERE nome_normalizado = ?",
+          nomeNormalizadoFutebol(futebolNormalizado.nome),
+        );
+        if (duplicado) throw new Error("Já existe um futebol com esse nome.");
         const parametrosFutebol = [
+          futebolNormalizado.nome,
+          nomeNormalizadoFutebol(futebolNormalizado.nome),
           futebolNormalizado.quantidadeJogadores,
           futebolNormalizado.quantidadeMensalistas,
           futebolNormalizado.quantidadeAvulsos,
           futebolNormalizado.tipoCadastro,
           futebolNormalizado.controlaPresenca ? 1 : 0,
           futebolNormalizado.controlePagamento,
+          futebolNormalizado.vencimentoQuadra || null,
+          futebolNormalizado.jogadoresPorTime,
+          futebolNormalizado.quantidadeTimes,
           futebolNormalizado.valorQuadraCentavos ?? null,
           futebolNormalizado.mensalidadeCentavos ?? null,
           futebolNormalizado.mensalidadeSugeridaCentavos ?? null,
@@ -340,16 +334,19 @@ export function concluirCadastroCompleto(
           futebolNormalizado.frequencia ?? null,
           futebolNormalizado.horario ?? null,
           futebolNormalizado.dataCriacao,
+          Date.now(),
         ] as const;
-        await executarEtapa(
+        const futebolSalvo = await executarEtapa(
           "salvar futebol",
           SQL_SALVAR_FUTEBOL,
           parametrosFutebol,
           () => db.runAsync(SQL_SALVAR_FUTEBOL, ...parametrosFutebol),
         );
+        futebolId = futebolSalvo.lastInsertRowId;
 
         for (const jogador of jogadoresNormalizados) {
           const parametrosJogador = [
+            futebolId,
             jogador.nome,
             normalizarNomeJogador(jogador.nome).toLowerCase(),
             jogador.tipo,
@@ -366,12 +363,16 @@ export function concluirCadastroCompleto(
           );
         }
         await executarEtapa(
-          "marcar configuração concluída",
-          SQL_MARCAR_SETUP_CONCLUIDO,
-          ["setup_done", "1"],
-          () => db.runAsync(SQL_MARCAR_SETUP_CONCLUIDO),
+          "definir futebol ativo",
+          "INSERT INTO app_config (key, value) VALUES ('active_futebol_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          [String(futebolId)],
+          () => db.runAsync(
+            "INSERT INTO app_config (key, value) VALUES ('active_futebol_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            String(futebolId),
+          ),
         );
       });
+      return futebolId;
     },
   );
 }
@@ -383,9 +384,7 @@ export function resetarDados(): Promise<ResultadoBanco<void>> {
     async () => {
       const db = await getDb();
       await db.withTransactionAsync(async () => {
-        await db.execAsync(
-          "DELETE FROM presencas; DELETE FROM jogadores; DELETE FROM futebol; DELETE FROM app_config;",
-        );
+        await db.execAsync("DELETE FROM futebol; DELETE FROM app_config;");
       });
     },
   );

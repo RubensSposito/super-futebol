@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import {
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   View,
@@ -14,6 +16,7 @@ type TelaBaseProps = {
   rolavel?: boolean;
   centralizada?: boolean;
   contentStyle?: StyleProp<ViewStyle>;
+  evitarTeclado?: boolean;
 };
 
 export function TelaBase({
@@ -21,6 +24,7 @@ export function TelaBase({
   rolavel = false,
   centralizada = false,
   contentStyle,
+  evitarTeclado = true,
 }: TelaBaseProps) {
   const conteudo = [
     styles.conteudo,
@@ -28,18 +32,30 @@ export function TelaBase({
     contentStyle,
   ];
 
+  const elementoConteudo = rolavel ? (
+    <ScrollView
+      style={styles.rolagem}
+      contentContainerStyle={[conteudo, { paddingBottom: spacing.xxxl * 2 }]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {children}
+    </ScrollView>
+  ) : (
+    <View style={[styles.conteudoFixo, ...conteudo]}>{children}</View>
+  );
+
   return (
     <SafeAreaView style={styles.areaSegura} edges={["top", "bottom"]}>
-      {rolavel ? (
-        <ScrollView
-          style={styles.rolagem}
-          contentContainerStyle={conteudo}
-          keyboardShouldPersistTaps="handled"
+      {evitarTeclado ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.keyboardContainer}
         >
-          {children}
-        </ScrollView>
+          {elementoConteudo}
+        </KeyboardAvoidingView>
       ) : (
-        <View style={[styles.conteudoFixo, ...conteudo]}>{children}</View>
+        elementoConteudo
       )}
     </SafeAreaView>
   );
@@ -48,6 +64,9 @@ export function TelaBase({
 const styles = StyleSheet.create({
   areaSegura: {
     backgroundColor: colors.background,
+    flex: 1,
+  },
+  keyboardContainer: {
     flex: 1,
   },
   rolagem: {

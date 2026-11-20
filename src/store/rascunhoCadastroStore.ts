@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   Futebol,
+  FutebolNovo,
   Jogador,
   NovoJogador,
   ResultadoAdicionarLista,
@@ -8,6 +9,7 @@ import type {
   ResultadoEdicaoJogador,
   ResultadoLeituraLista,
   RascunhoFutebol,
+  FutebolSemDataCriacao,
 } from "@/types";
 import { criarJogador, validarNovoJogador } from "@/lib/jogadores";
 
@@ -23,6 +25,8 @@ type RascunhoCadastroState = {
     id: string,
     jogador: NovoJogador,
   ) => ResultadoEdicaoJogador;
+  definirJogadores: (jogadores: Jogador[]) => void;
+  excluirJogador: (id: string) => void;
   limpar: () => void;
 };
 
@@ -31,6 +35,11 @@ export const useRascunhoCadastroStore = create<RascunhoCadastroState>(
     futebol: null,
     jogadores: [],
     salvarFutebol: (futebol) => set({ futebol }),
+    definirJogadores: (jogadores) => set({ jogadores }),
+    excluirJogador: (id) =>
+      set((state) => ({
+        jogadores: state.jogadores.filter((j) => j.id !== id),
+      })),
     adicionarJogador: (novoJogador) => {
       const resultado = criarJogador(novoJogador, get().jogadores);
       if (resultado.sucesso) {
@@ -100,6 +109,28 @@ export const useRascunhoCadastroStore = create<RascunhoCadastroState>(
 export function criarFutebolDoRascunho(
   rascunho: RascunhoFutebol,
   dataCriacao: string,
-): Futebol {
-  return { ...rascunho, dataCriacao };
+): FutebolNovo {
+  return { ...expandirRascunhoFutebol(rascunho), dataCriacao };
+}
+
+export function criarRascunhoDeFutebol(futebol: Futebol): RascunhoFutebol {
+  const {
+    dataCriacao: _dataCriacao,
+    diasSemana,
+    frequencia,
+    horario,
+    vencimentoQuadra,
+    ...dados
+  } = futebol;
+  return {
+    ...dados,
+    agenda: { diasSemana, frequencia, horario, vencimentoQuadra },
+  };
+}
+
+export function expandirRascunhoFutebol(
+  rascunho: RascunhoFutebol,
+): FutebolSemDataCriacao {
+  const { agenda, ...dados } = rascunho;
+  return { ...dados, ...agenda };
 }

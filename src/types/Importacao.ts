@@ -30,10 +30,22 @@ export type DadosHome = {
   futebol: import("./Futebol").Futebol | null;
   jogadores: Jogador[];
   presencas: Record<string, boolean>;
+  pagamentosCiclo: Record<string, number>;
+  cicloInicio: string | null;
+  pagamentosAvulsosJogo: Record<string, number>;
+  arrecadacaoAvulsosCicloCentavos: number;
+  quantidadePagamentosAvulsosCiclo: number;
 };
 
 export type ResultadoAdicaoJogadorBanco = {
   jogador: Jogador | null;
   duplicado: boolean;
   motivo?: import("./Jogador").MotivoFalhaCriacaoJogador;
+};
+
+export type PagamentoMensalidade = {
+  jogadorId: string;
+  cicloInicio: string;
+  valorPagoCentavos: number;
+  dataMarcacao: string;
 };

@@ -19,10 +19,12 @@ type PartidaRapidaState = {
       "goleiros" | "jogadores" | "ordem"
     >,
   ) => ResultadoAdicionarLista;
+  limpar: () => void;
 };
 
 export const usePartidaRapidaStore = create<PartidaRapidaState>((set, get) => ({
   jogadores: [],
+  limpar: () => set({ jogadores: [] }),
   adicionarJogador: (novoJogador) => {
     const resultado = criarJogador(novoJogador, get().jogadores);
     if (!resultado.sucesso) return resultado;

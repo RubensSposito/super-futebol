@@ -30,6 +30,7 @@ type FormularioJogadorSheetProps = {
   erroTipo?: string | null;
   erroVinculo?: string | null;
   erroFormulario?: string | null;
+  mensagemSucesso?: string | null;
   onNomeChange: (nome: string) => void;
   onTipoChange: (tipo: TipoJogador) => void;
   onPosicaoChange: (posicao: Posicao | null) => void;
@@ -37,6 +38,12 @@ type FormularioJogadorSheetProps = {
   onVinculoChange?: (vinculo: Vinculo) => void;
   onSalvar: () => void;
   onCancelar: () => void;
+  onExcluir?: () => void;
+  titulo?: string;
+  rotuloSalvar?: string;
+  rotuloContinuar?: string;
+  onSalvarContinuar?: () => void;
+  onChamarDuplicado?: () => void;
 };
 
 export function FormularioJogadorSheet({
@@ -52,6 +59,7 @@ export function FormularioJogadorSheet({
   erroTipo = null,
   erroVinculo = null,
   erroFormulario = null,
+  mensagemSucesso = null,
   onNomeChange,
   onTipoChange,
   onPosicaoChange,
@@ -59,6 +67,12 @@ export function FormularioJogadorSheet({
   onVinculoChange,
   onSalvar,
   onCancelar,
+  onExcluir,
+  titulo,
+  rotuloSalvar,
+  rotuloContinuar,
+  onSalvarContinuar,
+  onChamarDuplicado,
 }: FormularioJogadorSheetProps) {
   function fechar() {
     Keyboard.dismiss();
@@ -80,7 +94,7 @@ export function FormularioJogadorSheet({
           style={styles.fundo}
         />
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.teclado}
         >
           <View style={styles.sheet}>
@@ -91,7 +105,7 @@ export function FormularioJogadorSheet({
             >
               <View style={styles.handle} />
               <Texto variante="secao">
-                {modo === "edicao" ? "Editar jogador" : "Adicionar jogador"}
+                {titulo ?? (modo === "edicao" ? "Editar jogador" : "Adicionar jogador")}
               </Texto>
               <View style={styles.campos}>
                 <CampoComRotulo
@@ -156,6 +170,8 @@ export function FormularioJogadorSheet({
                   {erroFormulario}
                 </Texto>
               ) : null}
+              {mensagemSucesso ? <Texto variante="corpo" cor="primary">{mensagemSucesso}</Texto> : null}
+              {onChamarDuplicado ? <Botao variante="secundario" accessibilityLabel="Chamar avulso já cadastrado para o jogo" onPress={onChamarDuplicado}>Esse avulso já está cadastrado. Chamar para o jogo?</Botao> : null}
               <View style={styles.botoes}>
                 <Botao
                   variante="primario"
@@ -166,8 +182,21 @@ export function FormularioJogadorSheet({
                   }
                   onPress={onSalvar}
                 >
-                  {modo === "edicao" ? "Salvar alterações" : "Salvar"}
+                  {rotuloSalvar ?? (modo === "edicao" ? "Salvar alterações" : "Salvar")}
                 </Botao>
+                {onSalvarContinuar ? <Botao variante="secundario" accessibilityLabel={rotuloContinuar ?? "Adicionar e continuar"} onPress={onSalvarContinuar}>{rotuloContinuar ?? "Adicionar e continuar"}</Botao> : null}
+                {modo === "edicao" && onExcluir ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Excluir jogador"
+                    onPress={onExcluir}
+                    style={styles.botaoExcluir}
+                  >
+                    <Texto variante="corpo" style={styles.textoExcluir}>
+                      Excluir jogador
+                    </Texto>
+                  </Pressable>
+                ) : null}
                 <Botao
                   variante="secundario"
                   accessibilityLabel="Cancelar cadastro de jogador"
@@ -189,6 +218,19 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "flex-end",
   },
+  botaoExcluir: {
+    alignItems: "center",
+    backgroundColor: colors.errorBackground,
+    borderRadius: radii.button,
+    justifyContent: "center",
+    minHeight: dimensions.touchTarget,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  textoExcluir: {
+    color: colors.error,
+    fontWeight: "700",
+  },
   fundo: {
     ...StyleSheet.absoluteFill,
     backgroundColor: colors.overlay,
@@ -207,6 +249,7 @@ const styles = StyleSheet.create({
   },
   conteudo: {
     gap: spacing.lg,
+    paddingBottom: spacing.xxxl * 2,
   },
   handle: {
     alignSelf: "center",

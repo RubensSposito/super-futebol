@@ -21,5 +21,7 @@ export type ResultadoDivisaoTimes = {
   T: number;
   R: number;
   totais: TotaisDivisao;
-  motivo: "jogadores insuficientes" | null;
+  motivo: "jogadores insuficientes" | "poucos jogadores" | null;
+  quantidadeTimesInformada?: boolean;
+  divisaoIgual?: boolean;
 };

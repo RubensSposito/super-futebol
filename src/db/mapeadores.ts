@@ -20,12 +20,17 @@ export type LinhaJogador = {
 };
 
 export type LinhaFutebol = {
+  id: number;
+  nome: string;
   quantidade_jogadores: number;
   quantidade_mensalistas: number | null;
   quantidade_avulsos: number | null;
   tipo_cadastro: TipoCadastro;
   controla_presenca: number;
   controle_pagamento: ControlePagamento;
+  vencimento_quadra: string | null;
+  jogadores_por_time: number | null;
+  quantidade_times: number | null;
   valor_quadra_centavos: number | null;
   mensalidade_centavos: number | null;
   mensalidade_sugerida_centavos: number | null;
@@ -52,12 +57,17 @@ export function mapearJogador(linha: LinhaJogador): Jogador {
 
 export function mapearFutebol(linha: LinhaFutebol): Futebol {
   return {
+    id: linha.id,
+    nome: linha.nome,
     quantidadeJogadores: linha.quantidade_jogadores,
     quantidadeMensalistas: linha.quantidade_mensalistas,
     quantidadeAvulsos: linha.quantidade_avulsos,
     tipoCadastro: linha.tipo_cadastro,
     controlaPresenca: linha.controla_presenca === 1,
     controlePagamento: linha.controle_pagamento,
+    vencimentoQuadra: linha.vencimento_quadra ?? "",
+    jogadoresPorTime: linha.jogadores_por_time,
+    quantidadeTimes: linha.quantidade_times,
     valorQuadraCentavos: linha.valor_quadra_centavos,
     mensalidadeSugeridaCentavos: linha.mensalidade_sugerida_centavos,
     mensalidadeCentavos: linha.mensalidade_centavos,

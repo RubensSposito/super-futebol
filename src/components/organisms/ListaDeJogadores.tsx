@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { FlatList, SectionList, StyleSheet, View } from "react-native";
 import type { AvisoImportacao as AvisoImportacaoTipo, Jogador, TipoJogador } from "@/types";
 import {
@@ -20,9 +21,11 @@ type ListaDeJogadoresProps = {
   quantidade: number;
   aviso?: AvisoImportacaoTipo | null;
   quantidadeEsperada?: number;
+  contadorRotulo?: string;
   mostrarVinculo?: boolean;
   agrupar?: boolean;
   onEditar?: (jogador: Jogador) => void;
+  cabecalhoSuperior?: ReactNode;
 };
 
 export function ListaDeJogadores({
@@ -30,9 +33,11 @@ export function ListaDeJogadores({
   quantidade,
   aviso = null,
   quantidadeEsperada,
+  contadorRotulo = "Jogadores",
   mostrarVinculo = true,
   agrupar = true,
   onEditar,
+  cabecalhoSuperior,
 }: ListaDeJogadoresProps) {
   const goleiros = jogadores.filter((jogador) => jogador.tipo === "goleiro");
   const jogadoresDeLinha = jogadores.filter(
@@ -48,11 +53,12 @@ export function ListaDeJogadores({
 
   const cabecalho = (
     <View style={styles.cabecalho}>
+      {cabecalhoSuperior}
       {aviso ? <AvisoImportacao aviso={aviso} /> : null}
       <Texto variante="secao">
         {quantidadeEsperada === undefined
-          ? `Jogadores (${quantidade})`
-          : `Jogadores (${quantidade} de ${quantidadeEsperada})`}
+          ? `${contadorRotulo} (${quantidade})`
+          : `${contadorRotulo} cadastrados: ${quantidade} de ${quantidadeEsperada}`}
       </Texto>
     </View>
   );

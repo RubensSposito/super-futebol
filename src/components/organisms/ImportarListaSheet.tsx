@@ -28,7 +28,7 @@ type ImportarListaSheetProps = {
 };
 
 const ERRO_LISTA_INVALIDA =
-  "Nenhum jogador encontrado. Use o formato Goleiros: e Jogadores:.";
+  "Nenhum jogador identificado. Cole uma lista com nomes (ex: 1. João ou - João).";
 
 export function ImportarListaSheet({
   visivel,
@@ -65,7 +65,12 @@ export function ImportarListaSheet({
   }
 
   async function importar() {
-    if (!(await onImportar(texto, mostrarSeletorTipo ? vinculoLista : undefined))) {
+    if (!texto.trim()) {
+      setErro("Cole ou digite a lista de jogadores antes de importar.");
+      return;
+    }
+    const sucesso = await onImportar(texto, mostrarSeletorTipo ? vinculoLista : undefined);
+    if (!sucesso) {
       setErro(ERRO_LISTA_INVALIDA);
       return;
     }
@@ -87,20 +92,19 @@ export function ImportarListaSheet({
           style={styles.fundo}
         />
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.teclado}
         >
           <View style={styles.sheet}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
+              keyboardDismissMode="none"
               contentContainerStyle={styles.conteudo}
             >
               <View style={styles.handle} />
               <Texto variante="secao">Importar lista</Texto>
               <Texto variante="corpo">
-                Cole a lista no formato Goleiros: e Jogadores:, um nome por
-                linha depois do hífen.
+                Cole sua lista do WhatsApp. Aceita listas numeradas (1. Nome), com traço (- Nome) ou apenas um nome por linha. Para goleiros, você pode usar (G) ou cabeçalho Goleiros:.
               </Texto>
               {mostrarSeletorTipo ? (
                 <SeletorDeOpcoes
@@ -114,11 +118,10 @@ export function ImportarListaSheet({
               ) : null}
               <CampoTexto
                 accessibilityLabel="Lista de jogadores para importar"
-                accessibilityHint="Cole os cabeçalhos e jogadores, um nome por linha depois do hífen."
+                accessibilityHint="Cole ou digite os jogadores, um nome por linha."
                 multiline
-                textAlignVertical="top"
-                blurOnSubmit
-                onSubmitEditing={() => Keyboard.dismiss()}
+                scrollEnabled={false}
+                blurOnSubmit={false}
                 value={texto}
                 onChangeText={(valor) => {
                   setTexto(valor);
@@ -134,13 +137,29 @@ export function ImportarListaSheet({
                   {erro}
                 </Texto>
               ) : null}
-              <Botao
-                variante="secundario"
-                accessibilityLabel="Colar da área de transferência"
-                onPress={colarDaAreaDeTransferencia}
-              >
-                Colar da área de transferência
-              </Botao>
+              <View style={styles.linhaAcoesTexto}>
+                <Botao
+                  variante="secundario"
+                  accessibilityLabel="Colar da área de transferência"
+                  onPress={colarDaAreaDeTransferencia}
+                  style={styles.botaoAcaoTexto}
+                >
+                  Colar do WhatsApp
+                </Botao>
+                {texto.trim().length > 0 ? (
+                  <Botao
+                    variante="secundario"
+                    accessibilityLabel="Limpar texto"
+                    onPress={() => {
+                      setTexto("");
+                      setErro(null);
+                    }}
+                    style={styles.botaoLimparTexto}
+                  >
+                    ✕ Limpar
+                  </Botao>
+                ) : null}
+              </View>
               <View style={styles.botoes}>
                 <Botao
                   variante="primario"
@@ -188,6 +207,7 @@ const styles = StyleSheet.create({
   },
   conteudo: {
     gap: spacing.lg,
+    paddingBottom: spacing.xxxl * 2,
   },
   handle: {
     alignSelf: "center",
@@ -200,6 +220,17 @@ const styles = StyleSheet.create({
   campo: {
     fontFamily: typography.families.monospace,
     minHeight: dimensions.multilineFieldMinHeight,
+  },
+  linhaAcoesTexto: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  botaoAcaoTexto: {
+    flex: 1,
+  },
+  botaoLimparTexto: {
+    minWidth: 100,
   },
   botoes: {
     gap: spacing.md,

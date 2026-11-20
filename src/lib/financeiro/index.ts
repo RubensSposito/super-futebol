@@ -11,8 +11,11 @@ export {
   calcularPrevisaoAvulsos,
   calcularPrevisaoTotalMes,
   calcularSaldoMensalistas,
+  calcularResumoCicloMensal,
+  calcularResumoCicloComAvulsos,
+  calcularPagamentosAvulsoNecessarios,
   calcularSaldoTotal,
   calcularResumoFinanceiro,
 } from "./calcularResumoFinanceiro";
-export type { ResumoFinanceiro } from "./calcularResumoFinanceiro";
-export { formatarMoedaPtBr, lerMoedaPtBr } from "./moedaPtBr";
+export type { ResumoFinanceiro, ResumoCicloMensal } from "./calcularResumoFinanceiro";
+export { formatarMoedaPtBr, lerMoedaPtBr, mascararMoedaAoDigitar } from "./moedaPtBr";

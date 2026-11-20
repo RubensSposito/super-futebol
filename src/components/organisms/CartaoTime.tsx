@@ -1,5 +1,5 @@
 import { StyleSheet, View } from "react-native";
-import type { TimeFormado } from "@/types";
+import type { Jogador, TimeFormado } from "@/types";
 import { ItemDeJogador } from "@/components/molecules";
 import { Selo, Texto } from "@/components/atoms";
 import {
@@ -13,9 +13,15 @@ import {
 
 type CartaoTimeProps = {
   time: TimeFormado;
+  jogadorSelecionadoId?: string | null;
+  onSelecionarJogador?: (jogador: Jogador) => void;
 };
 
-export function CartaoTime({ time }: CartaoTimeProps) {
+export function CartaoTime({
+  time,
+  jogadorSelecionadoId,
+  onSelecionarJogador,
+}: CartaoTimeProps) {
   const cor = teamColors[(time.numero - 1) % teamColors.length];
   return (
     <View style={styles.container}>
@@ -29,7 +35,15 @@ export function CartaoTime({ time }: CartaoTimeProps) {
       </View>
       <View style={styles.corpo}>
         {time.goleiro ? (
-          <ItemDeJogador jogador={time.goleiro} />
+          <ItemDeJogador
+            jogador={time.goleiro}
+            selecionado={jogadorSelecionadoId === time.goleiro.id}
+            onPress={
+              onSelecionarJogador
+                ? () => onSelecionarJogador(time.goleiro!)
+                : undefined
+            }
+          />
         ) : time.vagaExtraGoleiro ? (
           <View style={[styles.vagaExtra, { backgroundColor: cor.soft }]}>
             <Texto variante="corpo" cor="textSecondary" style={styles.textoExtra}>
@@ -39,7 +53,16 @@ export function CartaoTime({ time }: CartaoTimeProps) {
           </View>
         ) : null}
         {time.jogadoresLinha.map((jogador) => (
-          <ItemDeJogador key={jogador.id} jogador={jogador} />
+          <ItemDeJogador
+            key={jogador.id}
+            jogador={jogador}
+            selecionado={jogadorSelecionadoId === jogador.id}
+            onPress={
+              onSelecionarJogador
+                ? () => onSelecionarJogador(jogador)
+                : undefined
+            }
+          />
         ))}
       </View>
     </View>

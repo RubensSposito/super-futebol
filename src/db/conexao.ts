@@ -45,5 +45,42 @@ export async function setConfig(key: string, value: string): Promise<void> {
 }
 
 export async function isSetupDone(): Promise<boolean> {
-  return (await getConfig("setup_done")) === "1";
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ total: number }>(
+    "SELECT COUNT(*) AS total FROM futebol",
+  );
+  return (row?.total ?? 0) > 0;
+}
+
+export async function getFutebolAtivoId(): Promise<number | null> {
+  const valor = await getConfig("active_futebol_id");
+  const id = valor === null ? NaN : Number(valor);
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ id: number }>(
+    "SELECT id FROM futebol WHERE id = ?",
+    id,
+  );
+  return row?.id ?? null;
+}
+
+export async function setFutebolAtivoId(id: number | null): Promise<void> {
+  if (id === null) {
+    const db = await getDb();
+    await db.runAsync("DELETE FROM app_config WHERE key = 'active_futebol_id'");
+    return;
+  }
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw new RangeError("Identificador de futebol inválido.");
+  }
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ id: number }>(
+    "SELECT id FROM futebol WHERE id = ?",
+    id,
+  );
+  if (!row) throw new Error("O futebol selecionado não existe.");
+  await db.runAsync(
+    "INSERT INTO app_config (key, value) VALUES ('active_futebol_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    String(id),
+  );
 }

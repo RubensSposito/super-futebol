@@ -8,6 +8,7 @@ type LinhaPresenca = {
 };
 
 export function obterPresencas(
+  futebolId: number,
   data: string,
 ): Promise<ResultadoBanco<Record<string, boolean>>> {
   return executarComResultado(
@@ -16,7 +17,10 @@ export function obterPresencas(
     async () => {
       const db = await getDb();
       const linhas = await db.getAllAsync<LinhaPresenca>(
-        "SELECT jogador_id, presente FROM presencas WHERE data = ?",
+        `SELECT p.jogador_id, p.presente FROM presencas p
+         JOIN jogadores j ON j.id = p.jogador_id
+         WHERE j.futebol_id = ? AND p.data = ?`,
+        futebolId,
         data,
       );
       return Object.fromEntries(
@@ -27,6 +31,7 @@ export function obterPresencas(
 }
 
 export function definirPresenca(
+  futebolId: number,
   jogadorId: string,
   data: string,
   presente: boolean,
@@ -38,12 +43,13 @@ export function definirPresenca(
       const db = await getDb();
       await db.runAsync(
         `INSERT INTO presencas (jogador_id, data, presente)
-         VALUES (?, ?, ?)
+         SELECT id, ?, ? FROM jogadores WHERE id = ? AND futebol_id = ?
          ON CONFLICT(jogador_id, data)
          DO UPDATE SET presente = excluded.presente`,
-        Number(jogadorId),
         data,
         presente ? 1 : 0,
+        Number(jogadorId),
+        futebolId,
       );
     },
   );

@@ -4,15 +4,16 @@ import { spacing, typography } from "@/theme";
 
 type ValorEmDestaqueProps = {
   valor: number;
+  rotulo?: string;
 };
 
-export function ValorEmDestaque({ valor }: ValorEmDestaqueProps) {
+export function ValorEmDestaque({ valor, rotulo = "Jogadores por time" }: ValorEmDestaqueProps) {
   return (
     <View style={styles.container}>
       <Texto variante="corpo" style={styles.valor}>
-        {valor} jogadores por time
+        {rotulo}: {valor}
       </Texto>
-      <Texto variante="legenda">contando o goleiro</Texto>
+      {rotulo === "Jogadores por time" ? <Texto variante="legenda">contando o goleiro</Texto> : null}
     </View>
   );
 }

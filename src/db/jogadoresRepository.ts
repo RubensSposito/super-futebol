@@ -21,8 +21,9 @@ function nomeNormalizado(nome: string): string {
   return normalizarNomeJogador(nome).toLowerCase();
 }
 
-function parametrosJogador(jogador: NovoJogador) {
+function parametrosJogador(futebolId: number, jogador: NovoJogador) {
   return [
+    futebolId,
     normalizarNomeJogador(jogador.nome),
     nomeNormalizado(jogador.nome),
     jogador.tipo,
@@ -33,23 +34,26 @@ function parametrosJogador(jogador: NovoJogador) {
   ] as const;
 }
 
-export function listarJogadores(): Promise<ResultadoBanco<Jogador[]>> {
+export function listarJogadores(futebolId: number): Promise<ResultadoBanco<Jogador[]>> {
   return executarComResultado("Listar jogadores", ERRO_LISTAR, async () => {
     const db = await getDb();
     const linhas = await db.getAllAsync<LinhaJogador>(
-      "SELECT id, nome, tipo, posicao, nivel, vinculo FROM jogadores ORDER BY id ASC",
+      "SELECT id, nome, tipo, posicao, nivel, vinculo FROM jogadores WHERE futebol_id = ? ORDER BY id ASC",
+      futebolId,
     );
     return linhas.map(mapearJogador);
   });
 }
 
 export function adicionarJogadorBanco(
+  futebolId: number,
   jogador: NovoJogador,
 ): Promise<ResultadoBanco<ResultadoAdicaoJogadorBanco>> {
   return executarComResultado("Adicionar jogador", ERRO_SALVAR, async () => {
     const db = await getDb();
     const existentes = await db.getAllAsync<{ nome: string }>(
-      "SELECT nome FROM jogadores",
+      "SELECT nome FROM jogadores WHERE futebol_id = ?",
+      futebolId,
     );
     const validacao = validarNovoJogador(jogador, existentes);
     if (!validacao.valido) {
@@ -62,9 +66,9 @@ export function adicionarJogadorBanco(
     const jogadorValidado = { ...jogador, nome: validacao.nome };
     const result = await db.runAsync(
       `INSERT OR IGNORE INTO jogadores
-        (nome, nome_normalizado, tipo, posicao, nivel, vinculo, data_criacao)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ...parametrosJogador(jogadorValidado),
+        (futebol_id, nome, nome_normalizado, tipo, posicao, nivel, vinculo, data_criacao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ...parametrosJogador(futebolId, jogadorValidado),
     );
     if (result.changes === 0) {
       return {
@@ -74,8 +78,9 @@ export function adicionarJogadorBanco(
       };
     }
     const salvo = await db.getFirstAsync<LinhaJogador>(
-      "SELECT id, nome, tipo, posicao, nivel, vinculo FROM jogadores WHERE id = ?",
+      "SELECT id, nome, tipo, posicao, nivel, vinculo FROM jogadores WHERE id = ? AND futebol_id = ?",
       result.lastInsertRowId,
+      futebolId,
     );
     if (!salvo) throw new Error("Jogador inserido não foi encontrado.");
     return { jogador: mapearJogador(salvo), duplicado: false };
@@ -83,6 +88,7 @@ export function adicionarJogadorBanco(
 }
 
 export function atualizarJogadorBanco(
+  futebolId: number,
   id: string,
   jogador: NovoJogador,
 ): Promise<ResultadoBanco<ResultadoAdicaoJogadorBanco>> {
@@ -97,7 +103,7 @@ export function atualizarJogadorBanco(
       const db = await getDb();
       const existentes = await db.getAllAsync<
         Pick<Jogador, "id" | "nome">
-      >("SELECT CAST(id AS TEXT) AS id, nome FROM jogadores");
+      >("SELECT CAST(id AS TEXT) AS id, nome FROM jogadores WHERE futebol_id = ?", futebolId);
       const validacao = validarNovoJogador(jogador, existentes, id);
       if (!validacao.valido) {
         return {
@@ -110,7 +116,7 @@ export function atualizarJogadorBanco(
         `UPDATE jogadores
          SET nome = ?, nome_normalizado = ?, tipo = ?, posicao = ?,
              nivel = ?, vinculo = ?
-         WHERE id = ?`,
+         WHERE id = ? AND futebol_id = ?`,
         validacao.nome,
         nomeNormalizado(validacao.nome),
         jogador.tipo,
@@ -118,6 +124,7 @@ export function atualizarJogadorBanco(
         jogador.nivel ?? null,
         jogador.vinculo ?? null,
         jogadorId,
+        futebolId,
       );
       if (result.changes === 0) {
         return {
@@ -127,8 +134,9 @@ export function atualizarJogadorBanco(
         };
       }
       const salvo = await db.getFirstAsync<LinhaJogador>(
-        "SELECT id, nome, tipo, posicao, nivel, vinculo FROM jogadores WHERE id = ?",
+        "SELECT id, nome, tipo, posicao, nivel, vinculo FROM jogadores WHERE id = ? AND futebol_id = ?",
         jogadorId,
+        futebolId,
       );
       if (!salvo) throw new Error("Jogador atualizado não foi encontrado.");
       return { jogador: mapearJogador(salvo), duplicado: false };
@@ -137,6 +145,7 @@ export function atualizarJogadorBanco(
 }
 
 export function adicionarJogadoresBanco(
+  futebolId: number,
   jogadores: readonly NovoJogador[],
 ): Promise<ResultadoBanco<ResultadoAdicionarLista>> {
   return executarComResultado(
@@ -149,7 +158,8 @@ export function adicionarJogadoresBanco(
       let ignorados = 0;
       await db.withTransactionAsync(async () => {
         const existentes = await db.getAllAsync<{ nome: string }>(
-          "SELECT nome FROM jogadores",
+          "SELECT nome FROM jogadores WHERE futebol_id = ?",
+          futebolId,
         );
         const nomesConhecidos = existentes.map((jogador) => ({
           nome: jogador.nome,
@@ -163,9 +173,9 @@ export function adicionarJogadoresBanco(
           const jogadorValidado = { ...jogador, nome: validacao.nome };
           const result = await db.runAsync(
             `INSERT OR IGNORE INTO jogadores
-              (nome, nome_normalizado, tipo, posicao, nivel, vinculo, data_criacao)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            ...parametrosJogador(jogadorValidado),
+              (futebol_id, nome, nome_normalizado, tipo, posicao, nivel, vinculo, data_criacao)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            ...parametrosJogador(futebolId, jogadorValidado),
           );
           if (result.changes === 0) {
             ignorados += 1;
@@ -188,3 +198,40 @@ export function adicionarJogadoresBanco(
     },
   );
 }
+
+export function excluirJogadorBanco(
+  futebolId: number,
+  id: string,
+): Promise<ResultadoBanco<void>> {
+  return executarComResultado(
+    "Excluir jogador",
+    "Não foi possível excluir o jogador.",
+    async () => {
+      const jogadorId = Number(id);
+      if (!Number.isSafeInteger(jogadorId) || jogadorId < 1) {
+        throw new RangeError("Identificador de jogador inválido.");
+      }
+      const db = await getDb();
+      await db.withTransactionAsync(async () => {
+        await db.runAsync("DELETE FROM presencas WHERE jogador_id = ?", jogadorId);
+        await db.runAsync(
+          "DELETE FROM pagamentos_mensalidade WHERE jogador_id = ?",
+          jogadorId,
+        );
+        await db.runAsync(
+          "DELETE FROM pagamentos_avulso WHERE jogador_id = ?",
+          jogadorId,
+        );
+        const result = await db.runAsync(
+          "DELETE FROM jogadores WHERE id = ? AND futebol_id = ?",
+          jogadorId,
+          futebolId,
+        );
+        if (result.changes === 0) {
+          throw new Error("Jogador não encontrado para exclusão.");
+        }
+      });
+    },
+  );
+}
+

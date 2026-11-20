@@ -3,13 +3,15 @@ import { Selo, Texto } from "@/components/atoms";
 import { CartaoRecolhivel, LinhaDeTotal } from "@/components/molecules";
 import {
   calcularArrecadacaoMensalistas,
-  calcularAvulsosNecessarios,
+  calcularArrecadacaoTotal,
+  calcularPagamentosAvulsoNecessarios,
   calcularCoberturaQuadraPercentual,
   calcularJogosPorMes,
   calcularMensalistasNecessarios,
   calcularPrevisaoAvulsos,
   calcularPrevisaoTotalMes,
   calcularSaldoTotal,
+  calcularResumoCicloMensal,
   formatarMoedaPtBr,
 } from "@/lib/financeiro";
 import type { FrequenciaFutebol } from "@/types";
@@ -35,11 +37,14 @@ type CartaoSaldoDoMesProps = {
   frequencia: FrequenciaFutebol | null;
   mostrarMensalistas: boolean;
   mostrarAvulsos: boolean;
+  pagamentosCentavos?: readonly number[];
+  pagamentosAvulsosCentavos?: number;
+  quantidadePagamentosAvulsos?: number;
 };
 
 function obterStatus(saldoCentavos: number) {
   if (saldoCentavos === 0) {
-    return { texto: "Quadra coberta", tipo: "sucesso" as const };
+    return { texto: "Quadra/campo coberto(a)", tipo: "sucesso" as const };
   }
   if (saldoCentavos > 0) {
     return {
@@ -66,17 +71,31 @@ export function CartaoSaldoDoMes({
   frequencia,
   mostrarMensalistas,
   mostrarAvulsos,
+  pagamentosCentavos,
+  pagamentosAvulsosCentavos = 0,
+  quantidadePagamentosAvulsos = 0,
 }: CartaoSaldoDoMesProps) {
   const mensalistasConsiderados =
     modo === "previsao" ? mensalistasMeta : mensalistasCadastrados;
-  const arrecadacaoMensalistas =
-    mostrarMensalistas && mensalidadeCentavos !== null
+  const resumoCiclo =
+    modo === "atual" && mostrarMensalistas && pagamentosCentavos !== undefined
+      ? calcularResumoCicloMensal(
+          pagamentosCentavos,
+          mensalistasCadastrados,
+          mensalidadeCentavos,
+          valorQuadraCentavos,
+        )
+      : null;
+  const arrecadacaoMensalistas = resumoCiclo
+    ? resumoCiclo.arrecadadoCentavos
+    : mostrarMensalistas && mensalidadeCentavos !== null
       ? calcularArrecadacaoMensalistas(
           mensalistasConsiderados,
           mensalidadeCentavos,
         )
       : 0;
   const jogosPorMes = calcularJogosPorMes(frequencia, diasSemana);
+  const totalParticipacoesAvulsasMes = avulsosInformados * jogosPorMes;
   const previsaoAvulsos =
     mostrarAvulsos && valorAvulsoCentavos !== null
       ? calcularPrevisaoAvulsos(
@@ -85,30 +104,19 @@ export function CartaoSaldoDoMes({
           jogosPorMes,
         )
       : null;
-  const saldoAtual = mostrarMensalistas
-    ? calcularSaldoTotal(arrecadacaoMensalistas, valorQuadraCentavos)
-    : previsaoAvulsos === null
-      ? calcularSaldoTotal(0, valorQuadraCentavos)
-      : calcularSaldoTotal(previsaoAvulsos, valorQuadraCentavos);
+  const saldoAtual = calcularSaldoTotal(calcularArrecadacaoTotal(arrecadacaoMensalistas, pagamentosAvulsosCentavos), valorQuadraCentavos);
   const mensalistasNecessarios =
     mostrarMensalistas && mensalidadeCentavos !== null
       ? calcularMensalistasNecessarios(saldoAtual, mensalidadeCentavos)
       : null;
   const avulsosNecessarios =
-    mostrarMensalistas && previsaoAvulsos !== null && valorAvulsoCentavos
-      ? calcularAvulsosNecessarios(
-          valorQuadraCentavos,
-          arrecadacaoMensalistas,
-          valorAvulsoCentavos,
-          jogosPorMes,
-        )
+    mostrarAvulsos && valorAvulsoCentavos
+      ? calcularPagamentosAvulsoNecessarios(saldoAtual, valorAvulsoCentavos)
       : null;
   const saldoPrevisaoTotal =
     previsaoAvulsos === null
       ? null
-      : mostrarMensalistas
-        ? calcularPrevisaoTotalMes(saldoAtual, previsaoAvulsos)
-        : saldoAtual;
+      : calcularPrevisaoTotalMes(saldoAtual, Math.max(0, previsaoAvulsos - pagamentosAvulsosCentavos));
   const coberturaPercentual = mostrarMensalistas
     ? calcularCoberturaQuadraPercentual(
         arrecadacaoMensalistas,
@@ -121,8 +129,10 @@ export function CartaoSaldoDoMes({
   const temAgenda = frequencia !== null && diasSemana.length > 0;
   const progresso = Math.max(0, Math.min(100, coberturaPercentual ?? 0));
   const titulo =
-    modo === "previsao"
-      ? "Previsão com todos os mensalistas cadastrados"
+    resumoCiclo
+      ? "Saldo do ciclo"
+      : modo === "previsao"
+      ? (mostrarAvulsos ? "Previsão de saldos (com e sem avulsos)" : "Previsão com todos os mensalistas")
       : "Saldo atual";
 
   if (compacto) {
@@ -130,18 +140,43 @@ export function CartaoSaldoDoMes({
       <View style={[styles.cartao, styles.cartaoCompacto]}>
         <Texto variante="secao">{titulo}</Texto>
         <View style={styles.blocoPrincipal}>
-          <LinhaDeTotal
-            rotulo={modo === "previsao" ? "Saldo previsto:" : "Saldo atual:"}
-            valor={formatarMoedaPtBr(saldoAtual)}
-            corValor={saldoAtual < 0 ? "error" : "textPrimary"}
-            destaque
-          />
-          <Selo tipo={statusAtual.tipo}>{statusAtual.texto}</Selo>
+          {modo === "previsao" && mostrarAvulsos && saldoPrevisaoTotal !== null && statusTotal ? (
+            <View style={styles.blocoDestaqueCheio}>
+              <Texto variante="legenda" cor="primary">
+                ⭐ PREVISÃO COM FUTEBOL CHEIO (MENSALISTAS + AVULSOS)
+              </Texto>
+              <Texto variante="corpo" style={styles.textoContaCheio}>
+                {avulsosInformados} avulsos x {jogosPorMes} jogos/mês = {totalParticipacoesAvulsasMes} participações
+                {"\n"}{totalParticipacoesAvulsasMes} x {formatarMoedaPtBr(valorAvulsoCentavos ?? 0)} = {formatarMoedaPtBr(previsaoAvulsos ?? 0)} de avulsos
+                {"\n"}+ Mensalistas ({formatarMoedaPtBr(arrecadacaoMensalistas)}) = {formatarMoedaPtBr(arrecadacaoMensalistas + (previsaoAvulsos ?? 0))}
+              </Texto>
+              <LinhaDeTotal
+                rotulo="Saldo previsto (futebol cheio):"
+                valor={formatarMoedaPtBr(saldoPrevisaoTotal)}
+                corValor={saldoPrevisaoTotal < 0 ? "error" : "textPrimary"}
+                destaque
+              />
+              <Selo tipo={statusTotal.tipo}>{statusTotal.texto}</Selo>
+            </View>
+          ) : null}
+
+          <View style={styles.blocoSemAvulsos}>
+            <Texto variante="legenda">
+              {mostrarAvulsos ? "Cenário base: se não tiver avulsos (só mensalistas)" : "Cenário dos mensalistas"}
+            </Texto>
+            <LinhaDeTotal
+              rotulo="Saldo só com mensalistas:"
+              valor={formatarMoedaPtBr(saldoAtual)}
+              corValor={saldoAtual < 0 ? "error" : "textPrimary"}
+            />
+            <Selo tipo={statusAtual.tipo}>{statusAtual.texto}</Selo>
+          </View>
+
           {mostrarMensalistas ? (
             <>
               <View
                 accessibilityRole="progressbar"
-                accessibilityLabel={`Cobertura da quadra: ${Math.round(
+                accessibilityLabel={`Cobertura da quadra ou campo: ${Math.round(
                   coberturaPercentual ?? 0,
                 )}%`}
                 accessibilityValue={{
@@ -155,8 +190,15 @@ export function CartaoSaldoDoMes({
               </View>
               <Texto variante="legenda">
                 {formatarMoedaPtBr(arrecadacaoMensalistas)} de{" "}
-                {formatarMoedaPtBr(valorQuadraCentavos)} da quadra cobertos
+                {formatarMoedaPtBr(valorQuadraCentavos)} da quadra/campo cobertos
               </Texto>
+              {resumoCiclo ? (
+                <LinhaDeTotal
+                  rotulo="Pagaram:"
+                  valor={`${resumoCiclo.quantidadePagantes} de ${mensalistasCadastrados} cadastrados`}
+                />
+              ) : null}
+              {modo === "atual" && mostrarAvulsos ? <LinhaDeTotal rotulo="Avulsos no ciclo:" valor={`${formatarMoedaPtBr(pagamentosAvulsosCentavos)} (${quantidadePagamentosAvulsos} pagamentos)`} /> : null}
               {modo === "previsao" ? (
                 <LinhaDeTotal
                   rotulo="Mensalistas:"
@@ -168,24 +210,26 @@ export function CartaoSaldoDoMes({
                 />
               ) : (
                 <LinhaDeTotal
-                  rotulo="Mensalistas cadastrados:"
-                  valor={`${mensalistasCadastrados} de ${mensalistasMeta}`}
+                  rotulo={resumoCiclo ? "Pagaram:" : "Mensalistas cadastrados:"}
+                  valor={resumoCiclo
+                    ? `${resumoCiclo.quantidadePagantes} de ${mensalistasCadastrados} cadastrados`
+                    : `${mensalistasCadastrados} de ${mensalistasMeta}`}
                 />
               )}
             </>
           ) : null}
           <LinhaDeTotal
-            rotulo="Valor da quadra:"
+            rotulo="Valor da quadra ou campo:"
             valor={formatarMoedaPtBr(valorQuadraCentavos)}
           />
           {mostrarMensalistas && mensalistasNecessarios !== null ? (
             mensalistasNecessarios > 0 ? (
               <Texto variante="corpo">
-                Faltam {mensalistasNecessarios} mensalistas
+                Faltam {mensalistasNecessarios} mensalistas para cobrir sem avulsos
               </Texto>
             ) : (
               <View style={styles.coberta}>
-                <Texto variante="corpo">Quadra coberta</Texto>
+                <Texto variante="corpo">Quadra ou campo coberto(a)</Texto>
                 {saldoAtual > 0 ? (
                   <Texto variante="corpo" cor="primary">
                     Sobra {formatarMoedaPtBr(saldoAtual)}
@@ -201,6 +245,16 @@ export function CartaoSaldoDoMes({
 
   const resumoRecolhido = (
     <View style={styles.resumoRecolhido}>
+      {modo === "previsao" && mostrarAvulsos && saldoPrevisaoTotal !== null && statusTotal ? (
+        <View style={styles.blocoDestaqueCheio}>
+          <Texto variante="legenda" cor="primary">
+            ⭐ FUTEBOL CHEIO: {formatarMoedaPtBr(saldoPrevisaoTotal)} ({statusTotal.texto})
+          </Texto>
+          <Texto variante="legenda">
+            {avulsosInformados} avulsos x {jogosPorMes} jogos/mês = {totalParticipacoesAvulsasMes} participações ({formatarMoedaPtBr(previsaoAvulsos ?? 0)})
+          </Texto>
+        </View>
+      ) : null}
       <View style={styles.linhaResumoSaldo}>
         <Texto
           variante="titulo"
@@ -211,13 +265,15 @@ export function CartaoSaldoDoMes({
         >
           {formatarMoedaPtBr(saldoAtual)}
         </Texto>
-        <Selo tipo={statusAtual.tipo}>{statusAtual.texto}</Selo>
+        <Selo tipo={statusAtual.tipo}>
+          {mostrarAvulsos && modo === "previsao" ? `Só mensalistas: ${statusAtual.texto}` : statusAtual.texto}
+        </Selo>
       </View>
       {mostrarMensalistas ? (
         <>
           <View
             accessibilityRole="progressbar"
-            accessibilityLabel={`Cobertura da quadra: ${Math.round(
+            accessibilityLabel={`Cobertura da quadra ou campo: ${Math.round(
               coberturaPercentual ?? 0,
             )}%`}
             accessibilityValue={{
@@ -233,9 +289,13 @@ export function CartaoSaldoDoMes({
             <Texto variante="corpo">
               {mensalistasNecessarios > 0
                 ? mensalistasNecessarios === 1
-                  ? "Falta 1 mensalista"
-                  : `Faltam ${mensalistasNecessarios} mensalistas`
-                : "Quadra coberta"}
+                  ? resumoCiclo
+                    ? "Falta 1 mensalista pagar para cobrir a quadra ou campo"
+                    : "Falta 1 mensalista"
+                  : resumoCiclo
+                    ? `Faltam ${mensalistasNecessarios} mensalistas pagarem para cobrir a quadra ou campo`
+                    : `Faltam ${mensalistasNecessarios} mensalistas`
+                : "Quadra/campo coberto(a)"}
             </Texto>
           )}
         </>
@@ -250,7 +310,7 @@ export function CartaoSaldoDoMes({
           <>
             <Texto variante="legenda">
               {formatarMoedaPtBr(arrecadacaoMensalistas)} de{" "}
-              {formatarMoedaPtBr(valorQuadraCentavos)} da quadra cobertos
+              {formatarMoedaPtBr(valorQuadraCentavos)} da quadra/campo cobertos
             </Texto>
             {modo === "previsao" ? (
               <LinhaDeTotal
@@ -263,13 +323,22 @@ export function CartaoSaldoDoMes({
               />
             ) : (
               <LinhaDeTotal
-                rotulo="Mensalistas cadastrados:"
-                valor={`${mensalistasCadastrados} de ${mensalistasMeta}`}
+                rotulo={resumoCiclo ? "Pagaram:" : "Mensalistas cadastrados:"}
+                valor={resumoCiclo
+                  ? `${resumoCiclo.quantidadePagantes} de ${mensalistasCadastrados} cadastrados`
+                  : `${mensalistasCadastrados} de ${mensalistasMeta}`}
               />
             )}
+            {resumoCiclo ? (
+              <LinhaDeTotal
+                rotulo="Previsto se todos os cadastrados pagarem:"
+                valor={formatarMoedaPtBr(calcularPrevisaoTotalMes(resumoCiclo.previsaoTodosPagandoCentavos, pagamentosAvulsosCentavos))}
+              />
+            ) : null}
+            {modo === "atual" && mostrarAvulsos ? <LinhaDeTotal rotulo="Avulsos no ciclo:" valor={`${formatarMoedaPtBr(pagamentosAvulsosCentavos)} (${quantidadePagamentosAvulsos} pagamentos)`} /> : null}
             <View
               accessibilityRole="progressbar"
-              accessibilityLabel={`Cobertura da quadra: ${Math.round(
+              accessibilityLabel={`Cobertura da quadra ou campo: ${Math.round(
                 coberturaPercentual ?? 0,
               )}%`}
               accessibilityValue={{
@@ -284,12 +353,17 @@ export function CartaoSaldoDoMes({
             {mensalistasNecessarios !== null ? (
               mensalistasNecessarios > 0 ? (
                 <Texto variante="corpo">
-                  Faltam {mensalistasNecessarios} mensalistas para cobrir a
-                  quadra
+                {mensalistasNecessarios === 1
+                  ? resumoCiclo
+                    ? "Falta 1 mensalista pagar para cobrir a quadra ou campo"
+                    : "Falta 1 mensalista para cobrir a quadra ou campo"
+                  : resumoCiclo
+                    ? `Faltam ${mensalistasNecessarios} mensalistas pagarem para cobrir a quadra ou campo`
+                    : `Faltam ${mensalistasNecessarios} mensalistas para cobrir a quadra ou campo`}
                 </Texto>
               ) : (
                 <View style={styles.coberta}>
-                  <Texto variante="corpo">Quadra coberta</Texto>
+                  <Texto variante="corpo">Quadra ou campo coberto(a)</Texto>
                   {saldoAtual > 0 ? (
                     <Texto variante="corpo" cor="primary">
                       Sobra {formatarMoedaPtBr(saldoAtual)}
@@ -301,7 +375,7 @@ export function CartaoSaldoDoMes({
           </>
         ) : null}
         <LinhaDeTotal
-          rotulo="Valor da quadra:"
+          rotulo="Valor da quadra ou campo:"
           valor={formatarMoedaPtBr(valorQuadraCentavos)}
         />
       </View>
@@ -309,6 +383,7 @@ export function CartaoSaldoDoMes({
       {mostrarAvulsos && previsaoAvulsos !== null ? (
         <View style={styles.bloco}>
           <Texto variante="corpo">Previsão dos avulsos</Texto>
+          {modo === "atual" && !mostrarMensalistas ? <LinhaDeTotal rotulo="Avulsos no ciclo:" valor={`${formatarMoedaPtBr(pagamentosAvulsosCentavos)} (${quantidadePagamentosAvulsos} pagamentos)`} /> : null}
           {temAgenda ? (
             <Texto variante="corpo">
               {avulsosInformados} avulsos x{" "}
@@ -327,12 +402,11 @@ export function CartaoSaldoDoMes({
               </Texto>
             </>
           )}
-          {mostrarMensalistas &&
-          saldoAtual < 0 &&
+          {modo === "atual" ? <LinhaDeTotal rotulo="Falta chegar de avulsos:" valor={formatarMoedaPtBr(Math.max(0, previsaoAvulsos - pagamentosAvulsosCentavos))} /> : null}
+          {saldoAtual < 0 &&
           avulsosNecessarios !== null ? (
             <Texto variante="corpo">
-              Ou {avulsosNecessarios} avulsos para cobrir o que falta
-              {jogosPorMes > 1 ? ` (${jogosPorMes} jogos no mês)` : ""}
+              ou {avulsosNecessarios} pagamentos de avulso
             </Texto>
           ) : null}
         </View>
@@ -371,6 +445,25 @@ const styles = StyleSheet.create({
   },
   blocoPrincipal: {
     gap: spacing.md,
+  },
+  blocoDestaqueCheio: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+    borderRadius: radii.card,
+    borderWidth: borders.surface,
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
+  textoContaCheio: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.primaryText,
+  },
+  blocoSemAvulsos: {
+    backgroundColor: colors.neutralBackground,
+    borderRadius: radii.card,
+    gap: spacing.xs,
+    padding: spacing.md,
   },
   resumoRecolhido: {
     gap: spacing.md,

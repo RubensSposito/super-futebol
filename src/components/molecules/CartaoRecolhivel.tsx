@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs -- Existing navigation/animation refs or derived UI state are intentionally read in render/effects. */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AccessibilityInfo,

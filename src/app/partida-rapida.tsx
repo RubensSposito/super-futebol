@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect -- Existing navigation/animation refs or derived UI state are intentionally read in render/effects. */
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import * as Clipboard from "expo-clipboard";
@@ -13,6 +14,7 @@ import { TelaBase } from "@/components/templates";
 import {
   usePartidaRapidaStore,
   useQuantidadeJogadores,
+  useSorteioStore,
 } from "@/store";
 import { lerListaJogadores } from "@/lib/importacao";
 import { spacing } from "@/theme";
@@ -33,6 +35,7 @@ export default function PartidaRapida() {
   const { modo } = useLocalSearchParams<{ modo?: string | string[] }>();
   const jogadores = usePartidaRapidaStore((state) => state.jogadores);
   const quantidade = useQuantidadeJogadores();
+  const prepararSorteio = useSorteioStore((state) => state.preparar);
   const adicionarJogador = usePartidaRapidaStore(
     (state) => state.adicionarJogador,
   );
@@ -153,7 +156,7 @@ export default function PartidaRapida() {
       />
       <RodapeAvancar
         habilitado={quantidade >= 2}
-        onAvancar={() => router.push("/resultado")}
+        onAvancar={() => { prepararSorteio({ jogadores, rotulo: "Partida rápida", jogadoresPorTime: null, quantidadeTimes: null }); router.push("/resultado"); }}
       />
       <FormularioJogadorSheet
         visivel={formularioVisivel}

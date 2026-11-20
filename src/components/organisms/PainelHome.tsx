@@ -10,11 +10,13 @@ import type {
   AvisoImportacao as AvisoImportacaoTipo,
   DadosHome,
   Jogador,
+  ResultadoDivisaoTimes,
   TipoJogador,
 } from "@/types";
 import { Botao, Texto } from "@/components/atoms";
 import {
   CabecalhoSecaoJogadores,
+  FaixaCicloMensalidade,
   FaixaStatusJogo,
   ItemDeJogador,
   SeletorDeOpcoes,
@@ -23,6 +25,7 @@ import {
 import { CartaoSaldoDoMes } from "./CartaoSaldoDoMes";
 import { ResumoDePresenca } from "./ResumoDePresenca";
 import { formatarMoedaPtBr } from "@/lib/financeiro";
+import { calcularCicloMensal } from "@/lib/ciclos";
 import { DIAS_SEMANA, FREQUENCIAS } from "@/constants";
 import {
   borders,
@@ -30,10 +33,11 @@ import {
   dimensions,
   radii,
   spacing,
+  typography,
 } from "@/theme";
 
 export type FiltroPresenca = "todos" | "presentes" | "ausentes";
-export type FiltroVinculo = "todos" | "mensalistas" | "avulsos";
+export type FiltroVinculo = "todos" | "mensalistas" | "avulsos" | "pendentes";
 
 const FILTROS_PRESENCA = [
   { value: "todos", label: "Todos" },
@@ -45,6 +49,14 @@ const FILTROS_VINCULO = [
   { value: "todos", label: "Todos os vínculos" },
   { value: "mensalistas", label: "Mensalistas" },
   { value: "avulsos", label: "Avulsos" },
+] as const;
+const FILTROS_VINCULO_COM_PENDENTES = [
+  ...FILTROS_VINCULO,
+  { value: "pendentes", label: "Pendentes" },
+] as const;
+const FILTROS_SO_MENSALISTAS = [
+  { value: "todos", label: "Todos" },
+  { value: "pendentes", label: "Pendentes" },
 ] as const;
 
 type PropsSecaoHome = {
@@ -69,13 +81,18 @@ type PainelHomeProps = {
   filtroVinculo: FiltroVinculo;
   jogadoresVisiveis: readonly Jogador[];
   totalPresentes: number;
+  dataReferencia: string;
   onDataChange: (deslocamentoDias: number) => void;
   onHoje: () => void;
   onFiltroChange: (filtro: FiltroPresenca) => void;
   onFiltroVinculoChange: (filtro: FiltroVinculo) => void;
   onPresencaChange: (jogadorId: string, presente: boolean) => void;
+  onPagamentoChange: (jogadorId: string, pago: boolean) => void;
   onEditarJogador: (jogador: Jogador) => void;
   onEditarFutebol: () => void;
+  onSair: () => void;
+  sorteioSalvo?: ResultadoDivisaoTimes | null;
+  onAbrirTimes?: () => void;
 };
 
 export function PainelHome({
@@ -93,13 +110,18 @@ export function PainelHome({
   filtroVinculo,
   jogadoresVisiveis,
   totalPresentes,
+  dataReferencia,
   onDataChange,
   onHoje,
   onFiltroChange,
   onFiltroVinculoChange,
   onPresencaChange,
+  onPagamentoChange,
   onEditarJogador,
   onEditarFutebol,
+  onSair,
+  sorteioSalvo,
+  onAbrirTimes,
 }: PainelHomeProps) {
   const futebol = dados.futebol;
   const mostrarMensalistas =
@@ -108,11 +130,12 @@ export function PainelHome({
   const mostrarAvulsos =
     futebol?.controlePagamento === "avulsos" ||
     futebol?.controlePagamento === "ambos";
-  const avulsosCadastrados =
-    futebol?.tipoCadastro === "mensalistas_e_avulsos"
-      ? dados.jogadores.filter((jogador) => jogador.vinculo === "avulso")
-          .length
-      : 0;
+  const mensalistas = dados.jogadores.filter((jogador) =>
+    futebol?.tipoCadastro === "so_mensalistas" || jogador.vinculo === "mensalista",
+  );
+  const cicloMensal = mostrarMensalistas && futebol?.vencimentoQuadra
+    ? calcularCicloMensal(Number(futebol.vencimentoQuadra.slice(8, 10)), dataReferencia)
+    : null;
   const dias = futebol?.diasSemana
     .map((valor) => DIAS_SEMANA.find((opcao) => opcao.value === valor)?.label)
     .filter((dia) => dia !== undefined)
@@ -120,21 +143,31 @@ export function PainelHome({
   const frequencia = FREQUENCIAS.find(
     (opcao) => opcao.value === futebol?.frequencia,
   );
-  const resumoAgenda = [
+  const resumoJogos = [
     dias || null,
     frequencia?.label ?? null,
     futebol?.horario ?? null,
   ]
     .filter((parte): parte is string => parte !== null)
     .join(" · ");
+  const linhaJogos = resumoJogos ? `Jogos: ${resumoJogos}` : null;
+  const linhaVencimento = futebol?.vencimentoQuadra
+    ? `Vencimento da quadra: todo dia ${futebol.vencimentoQuadra.slice(8, 10)}`
+    : null;
 
   const jogadoresDoVinculo = useMemo(() => {
     if (filtroVinculo === "todos") return dados.jogadores;
+    if (filtroVinculo === "pendentes") {
+      return dados.jogadores.filter((jogador) =>
+        ((mostrarMensalistas && (futebol?.tipoCadastro === "so_mensalistas" || jogador.vinculo === "mensalista")) && dados.pagamentosCiclo[jogador.id] === undefined) ||
+        (jogador.vinculo === "avulso" && dados.presencas[jogador.id] === true && dados.pagamentosAvulsosJogo[jogador.id] === undefined),
+      );
+    }
     return dados.jogadores.filter(
       (jogador) => jogador.vinculo ===
         (filtroVinculo === "mensalistas" ? "mensalista" : "avulso"),
     );
-  }, [dados.jogadores, filtroVinculo]);
+  }, [dados.jogadores, dados.pagamentosCiclo, dados.pagamentosAvulsosJogo, dados.presencas, filtroVinculo, futebol?.tipoCadastro, mostrarMensalistas]);
   const idsVisiveis = useMemo(
     () => new Set(jogadoresVisiveis.map((jogador) => jogador.id)),
     [jogadoresVisiveis],
@@ -143,7 +176,10 @@ export function PainelHome({
   const secaoComTipo = (
     tipo: TipoJogador,
   ): { total: number; confirmados: number; visiveis: Jogador[] } => {
-    const todos = jogadoresDoVinculo.filter((jogador) => jogador.tipo === tipo);
+    const todos = jogadoresDoVinculo.filter((jogador) => {
+      if (jogador.tipo !== tipo) return false;
+      return true;
+    });
     const visiveis = todos.filter((jogador) => idsVisiveis.has(jogador.id));
     return {
       total: todos.length,
@@ -204,11 +240,13 @@ export function PainelHome({
       ) : null}
       <View style={styles.topo}>
         <View style={styles.tituloHome}>
-          <Texto variante="titulo">Seu futebol</Texto>
-          <Texto variante="corpo">
+          <Texto variante="titulo">{futebol?.nome ?? "Seu futebol"}</Texto>
+          <Texto variante="legenda">
             {dados.jogadores.length} jogadores cadastrados
           </Texto>
         </View>
+        <View style={styles.acoesTopo}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sair deste futebol e voltar para a lista" onPress={onSair} style={styles.botaoSair}><Ionicons name="exit-outline" color={colors.primaryText} size={dimensions.editIconSize} /><Texto variante="corpo" style={styles.textoEditarFutebol}>Sair</Texto></Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Editar informações do futebol"
@@ -224,65 +262,71 @@ export function PainelHome({
             size={dimensions.editIconSize}
           />
           <Texto variante="corpo" style={styles.textoEditarFutebol}>
-            Editar informações do futebol
+            Editar futebol
           </Texto>
         </Pressable>
+        </View>
       </View>
 
-      {futebol &&
-      (futebol.nomeQuadra || futebol.endereco || resumoAgenda) ? (
-        <View style={styles.cartao}>
-          <Texto variante="secao">Dados do futebol</Texto>
-          {futebol.nomeQuadra || futebol.endereco ? (
-            <Texto variante="corpo">
-              📍{" "}
-              {[futebol.nomeQuadra, futebol.endereco]
-                .filter((parte): parte is string => Boolean(parte))
-                .join(" · ")}
-            </Texto>
-          ) : null}
-          {resumoAgenda ? (
-            <Texto variante="corpo">🗓️ {resumoAgenda}</Texto>
-          ) : null}
-        </View>
+      {cicloMensal ? (
+        <FaixaCicloMensalidade
+          inicio={cicloMensal.inicio}
+          fim={cicloMensal.fim}
+          vencimento={cicloMensal.proximoVencimento}
+          diasAteVencimento={cicloMensal.diasAteVencimento}
+        />
       ) : null}
 
-      <View style={styles.cartao}>
-        <Texto variante="secao">Resumo do cadastro</Texto>
-        <View style={styles.resumoCadastro}>
-          <Texto variante="corpo">
-            {futebol?.tipoCadastro === "basico"
-              ? "Cadastro básico"
-              : futebol?.tipoCadastro === "so_mensalistas"
-                ? "Só mensalistas"
-                : "Mensalistas e avulsos"}
-          </Texto>
-          {futebol?.quantidadeMensalistas !== null &&
-          futebol?.quantidadeMensalistas !== undefined ? (
-            <Texto variante="legenda">
-              {futebol.tipoCadastro === "so_mensalistas"
-                ? dados.jogadores.length
-                : dados.jogadores.filter(
-                    (jogador) => jogador.vinculo === "mensalista",
-                  ).length}{" "}
-              de {futebol.quantidadeMensalistas} mensalistas
-            </Texto>
+      {/* Card compacto com info do futebol e resumo do cadastro */}
+      {futebol ? (
+        <View style={styles.cartao}>
+          {(futebol.nomeQuadra || futebol.endereco || linhaJogos || linhaVencimento) ? (
+            <View style={styles.infoLinha}>
+              {futebol.nomeQuadra || futebol.endereco ? (
+                <Texto variante="legenda">
+                  📍{" "}
+                  {[futebol.nomeQuadra, futebol.endereco]
+                    .filter((parte): parte is string => Boolean(parte))
+                    .join(" · ")}
+                </Texto>
+              ) : null}
+              {linhaJogos ? (
+                <Texto variante="legenda">🗓️ {linhaJogos}</Texto>
+              ) : null}
+              {linhaVencimento ? (
+                <Texto variante="legenda">{linhaVencimento}</Texto>
+              ) : null}
+            </View>
           ) : null}
-          {futebol?.controlePagamento !== "nenhum" &&
-          futebol?.mensalidadeCentavos !== null &&
-          futebol?.mensalidadeCentavos !== undefined ? (
+          <View style={styles.infoLinha}>
             <Texto variante="legenda">
-              Mensalidade: {formatarMoedaPtBr(futebol.mensalidadeCentavos)}
+              {futebol.tipoCadastro === "basico"
+                ? "Cadastro básico"
+                : futebol.tipoCadastro === "so_mensalistas"
+                  ? "Só mensalistas"
+                  : "Mensalistas e avulsos"}
             </Texto>
-          ) : null}
-          {futebol?.valorQuadraCentavos !== null &&
-          futebol?.valorQuadraCentavos !== undefined ? (
-            <Texto variante="legenda">
-              Valor da quadra: {formatarMoedaPtBr(futebol.valorQuadraCentavos)}
-            </Texto>
-          ) : null}
+            {futebol.quantidadeMensalistas !== null &&
+            futebol.quantidadeMensalistas !== undefined ? (
+              <Texto variante="legenda">
+                {futebol.tipoCadastro === "so_mensalistas"
+                  ? dados.jogadores.length
+                  : dados.jogadores.filter(
+                      (jogador) => jogador.vinculo === "mensalista",
+                    ).length}{" "}
+                / {futebol.quantidadeMensalistas} mensalistas
+              </Texto>
+            ) : null}
+            {futebol.controlePagamento !== "nenhum" &&
+            futebol.mensalidadeCentavos !== null &&
+            futebol.mensalidadeCentavos !== undefined ? (
+              <Texto variante="legenda">
+                Mensalidade: {formatarMoedaPtBr(futebol.mensalidadeCentavos)}
+              </Texto>
+            ) : null}
+          </View>
         </View>
-      </View>
+      ) : null}
 
       {futebol &&
       futebol.tipoCadastro !== "basico" &&
@@ -290,15 +334,9 @@ export function PainelHome({
       futebol.valorQuadraCentavos !== null ? (
         <CartaoSaldoDoMes
           modo="atual"
-          mensalistasCadastrados={
-            futebol.tipoCadastro === "so_mensalistas"
-              ? dados.jogadores.length
-              : dados.jogadores.filter(
-                  (jogador) => jogador.vinculo === "mensalista",
-                ).length
-          }
+          mensalistasCadastrados={mensalistas.length}
           mensalistasMeta={futebol.quantidadeMensalistas ?? 0}
-          avulsosInformados={avulsosCadastrados}
+          avulsosInformados={futebol.quantidadeAvulsos ?? 0}
           mensalidadeCentavos={
             mostrarMensalistas ? futebol.mensalidadeCentavos : null
           }
@@ -313,6 +351,9 @@ export function PainelHome({
           frequencia={futebol.frequencia}
           mostrarMensalistas={mostrarMensalistas}
           mostrarAvulsos={mostrarAvulsos}
+          pagamentosCentavos={Object.values(dados.pagamentosCiclo)}
+          pagamentosAvulsosCentavos={dados.arrecadacaoAvulsosCicloCentavos}
+          quantidadePagamentosAvulsos={dados.quantidadePagamentosAvulsosCiclo}
         />
       ) : null}
 
@@ -365,8 +406,30 @@ export function PainelHome({
               jogadoresCadastrados={jogadoresCadastrados}
             />
           ) : (
-            <Texto variante="corpo">Carregando presenças...</Texto>
+            <Texto variante="legenda">Carregando presenças...</Texto>
           )}
+          {sorteioSalvo ? (
+            <View style={styles.cardSorteioSalvo}>
+              <View style={styles.infoSorteioSalvo}>
+                <Texto variante="corpo" style={styles.tituloSorteioSalvo}>
+                  ⚽ Times definidos ({sorteioSalvo.times.length} times)
+                </Texto>
+                <Texto variante="legenda" cor="textSecondary">
+                  {sorteioSalvo.totais.jogadores} jogadores · {sorteioSalvo.reservas.length} reservas
+                </Texto>
+              </View>
+              {onAbrirTimes ? (
+                <Botao
+                  variante="primario"
+                  accessibilityLabel="Ver escalação dos times sorteados"
+                  onPress={onAbrirTimes}
+                  style={styles.botaoVerTimes}
+                >
+                  Ver times
+                </Botao>
+              ) : null}
+            </View>
+          ) : null}
           <SeletorDeOpcoes
             rotulo="Filtrar jogadores"
             opcoes={FILTROS_PRESENCA}
@@ -377,10 +440,16 @@ export function PainelHome({
           />
         </>
       ) : null}
-      {futebol?.tipoCadastro === "mensalistas_e_avulsos" ? (
+      {futebol?.tipoCadastro === "mensalistas_e_avulsos" || mostrarMensalistas ? (
         <SeletorDeOpcoes
           rotulo="Filtrar por vínculo"
-          opcoes={FILTROS_VINCULO}
+          opcoes={
+            mostrarMensalistas || mostrarAvulsos
+              ? futebol?.tipoCadastro === "so_mensalistas"
+                ? FILTROS_SO_MENSALISTAS
+                : FILTROS_VINCULO_COM_PENDENTES
+              : FILTROS_VINCULO
+          }
           valor={filtroVinculo}
           onChange={(valor) => {
             if (valor) onFiltroVinculoChange(valor);
@@ -403,9 +472,13 @@ export function PainelHome({
           controlarPresenca={futebol?.controlaPresenca ?? false}
           presente={dados.presencas[item.id] ?? false}
           mostrarVinculo={futebol?.tipoCadastro === "mensalistas_e_avulsos"}
+          pago={item.vinculo === "avulso" ? (dados.presencas[item.id] === true ? dados.pagamentosAvulsosJogo[item.id] !== undefined : undefined) : dados.pagamentosCiclo[item.id] !== undefined}
+          mostrarPagamento={item.vinculo === "avulso" ? mostrarAvulsos : mostrarMensalistas}
+          desabilitarPagamento={item.vinculo === "avulso" && dados.presencas[item.id] !== true}
           onPresencaChange={(presente) =>
             onPresencaChange(item.id, presente)
           }
+          onPagamentoChange={(pago) => onPagamentoChange(item.id, pago)}
           onEditar={() => onEditarJogador(item)}
         />
       )}
@@ -444,6 +517,10 @@ type ItemHomeProps = {
   presente: boolean;
   mostrarVinculo: boolean;
   onPresencaChange: (presente: boolean) => void;
+  pago: boolean | undefined;
+  mostrarPagamento: boolean;
+  desabilitarPagamento: boolean;
+  onPagamentoChange: (pago: boolean) => void;
   onEditar: () => void;
 };
 
@@ -453,6 +530,10 @@ function ItemHome({
   presente,
   mostrarVinculo,
   onPresencaChange,
+  pago,
+  mostrarPagamento,
+  desabilitarPagamento,
+  onPagamentoChange,
   onEditar,
 }: ItemHomeProps) {
   return (
@@ -462,6 +543,13 @@ function ItemHome({
       mostrarVinculo={mostrarVinculo}
       presente={controlarPresenca ? presente : undefined}
       onPresencaChange={controlarPresenca ? onPresencaChange : undefined}
+      pago={mostrarPagamento ? pago : undefined}
+      onPagamentoChange={
+        mostrarPagamento
+          ? onPagamentoChange
+          : undefined
+      }
+      desabilitarPagamento={desabilitarPagamento}
       onEdit={onEditar}
     />
   );
@@ -476,6 +564,8 @@ function SeparadorSecoes() {
 }
 
 const styles = StyleSheet.create({
+  acoesTopo: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  botaoSair: { minHeight: 48, minWidth: 48, paddingHorizontal: spacing.xs, flexDirection: "row", alignItems: "center", gap: spacing.xs },
   lista: {
     flex: 1,
   },
@@ -488,7 +578,11 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
   topo: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.md,
+    justifyContent: "space-between",
   },
   tituloHome: {
     gap: spacing.xs,
@@ -498,9 +592,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
     borderRadius: radii.button,
     flexDirection: "row",
-    gap: spacing.sm,
+    gap: spacing.xs,
     minHeight: dimensions.touchTarget,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   botaoEditarPressionado: {
@@ -516,6 +610,9 @@ const styles = StyleSheet.create({
     borderWidth: borders.surface,
     gap: spacing.md,
     padding: spacing.lg,
+  },
+  infoLinha: {
+    gap: spacing.xs,
   },
   resumoCadastro: {
     gap: spacing.sm,
@@ -549,5 +646,26 @@ const styles = StyleSheet.create({
   vazioSecao: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
+  },
+  cardSorteioSalvo: {
+    alignItems: "center",
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    justifyContent: "space-between",
+    padding: spacing.md,
+  },
+  infoSorteioSalvo: {
+    flex: 1,
+    gap: 2,
+  },
+  tituloSorteioSalvo: {
+    fontWeight: typography.weights.bold,
+  },
+  botaoVerTimes: {
+    minWidth: 100,
   },
 });

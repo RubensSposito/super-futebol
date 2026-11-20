@@ -18,13 +18,18 @@ export type {
   ResultadoBanco,
   DadosHome,
   ResultadoAdicaoJogadorBanco,
+  PagamentoMensalidade,
 } from "./Importacao";
 export type {
   ControlePagamento,
   Futebol,
+  FutebolNovo,
+  FutebolLista,
   RascunhoFutebol,
   TipoCadastro,
   FrequenciaFutebol,
+  AgendaFutebol,
+  FutebolSemDataCriacao,
 } from "./Futebol";
 export type {
   ResultadoDivisaoTimes,

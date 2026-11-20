@@ -4,6 +4,7 @@ import {
   LinhaDeAlternador,
   ValorEmDestaque,
 } from "@/components/molecules";
+import { Botao } from "@/components/atoms";
 import { borders, colors, radii, spacing } from "@/theme";
 
 type SeletorTamanhoDoTimeProps = {
@@ -14,6 +15,12 @@ type SeletorTamanhoDoTimeProps = {
   totalJogadores: number;
   onModoAutomaticoChange: (valor: boolean) => void;
   onTextoCampoChange: (valor: string) => void;
+  textoTimes: string;
+  timesEmUso: number;
+  onTextoTimesChange: (valor: string) => void;
+  erroTimes: string | null;
+  onLimparTamanho: () => void;
+  onLimparTimes: () => void;
 };
 
 export function SeletorTamanhoDoTime({
@@ -24,6 +31,12 @@ export function SeletorTamanhoDoTime({
   totalJogadores,
   onModoAutomaticoChange,
   onTextoCampoChange,
+  textoTimes,
+  timesEmUso,
+  onTextoTimesChange,
+  erroTimes,
+  onLimparTamanho,
+  onLimparTimes,
 }: SeletorTamanhoDoTimeProps) {
   const apoio = modoAutomatico
     ? `O app escolhe o melhor tamanho para ${totalJogadores} jogadores.`
@@ -38,19 +51,25 @@ export function SeletorTamanhoDoTime({
         onChange={onModoAutomaticoChange}
       />
       {modoAutomatico ? (
-        <ValorEmDestaque valor={tamanhoEmUso} />
+        <View style={styles.valores}>
+          <ValorEmDestaque rotulo="Jogadores por time" valor={tamanhoEmUso} />
+          <ValorEmDestaque rotulo="Times" valor={timesEmUso} />
+        </View>
       ) : (
-        <CampoComRotulo
-          rotulo="Jogadores por time (com goleiro)"
-          accessibilityLabel="Jogadores por time (com goleiro)"
-          accessibilityHint={`Informe um número inteiro entre 2 e ${totalJogadores}.`}
-          valor={textoCampo}
-          mensagemErro={erro}
-          keyboardType="number-pad"
-          returnKeyType="done"
-          onSubmitEditing={Keyboard.dismiss}
-          onChangeText={onTextoCampoChange}
-        />
+        <View style={styles.valores}>
+          <View style={styles.campoLinha}>
+            <View style={styles.campo}>
+              <CampoComRotulo rotulo="Jogadores por time" accessibilityLabel="Jogadores por time" accessibilityHint={`Informe um número entre 2 e ${totalJogadores}.`} valor={textoCampo} placeholder={`Calculado: ${tamanhoEmUso}`} mensagemErro={erro} keyboardType="number-pad" returnKeyType="done" onSubmitEditing={Keyboard.dismiss} onChangeText={onTextoCampoChange} />
+            </View>
+            <Botao variante="secundario" accessibilityLabel="Limpar jogadores por time" onPress={onLimparTamanho}>Limpar</Botao>
+          </View>
+          <View style={styles.campoLinha}>
+            <View style={styles.campo}>
+              <CampoComRotulo rotulo="Quantidade de times" accessibilityLabel="Quantidade de times" accessibilityHint={`Informe um número entre 2 e ${totalJogadores}.`} valor={textoTimes} placeholder={`Calculado: ${timesEmUso}`} mensagemErro={erroTimes} keyboardType="number-pad" returnKeyType="done" onSubmitEditing={Keyboard.dismiss} onChangeText={onTextoTimesChange} />
+            </View>
+            <Botao variante="secundario" accessibilityLabel="Limpar quantidade de times" onPress={onLimparTimes}>Limpar</Botao>
+          </View>
+        </View>
       )}
     </View>
   );
@@ -65,4 +84,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.lg,
   },
+  valores: { gap: spacing.md },
+  campoLinha: { alignItems: "flex-end", flexDirection: "row", gap: spacing.sm },
+  campo: { flex: 1 },
 });

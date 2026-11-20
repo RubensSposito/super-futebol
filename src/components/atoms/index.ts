@@ -1,5 +1,6 @@
 export { Avatar } from "./Avatar";
 export { Alternador } from "./Alternador";
+export { Checkbox } from "./Checkbox";
 export { Botao } from "./Botao";
 export type { VarianteBotao } from "./Botao";
 export { CampoTexto } from "./CampoTexto";

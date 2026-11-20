@@ -40,6 +40,7 @@ export function Botao({
       styles.base,
       styles[variante],
       variante === "opcao" && ativo ? styles.opcaoAtiva : null,
+      variante === "secundario" && ativo ? styles.secundarioAtivo : null,
       desabilitado ? styles.desabilitado : null,
       state.pressed && !desabilitado
         ? variante === "primario"
@@ -88,6 +89,11 @@ const styles = StyleSheet.create({
   },
   secundario: {
     backgroundColor: colors.primarySoft,
+  },
+  secundarioAtivo: {
+    backgroundColor: colors.primarySoftPressed,
+    borderColor: colors.primary,
+    borderWidth: borders.highlight,
   },
   opcao: {
     flexBasis: "45%",

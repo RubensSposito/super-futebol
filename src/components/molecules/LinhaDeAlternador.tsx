@@ -29,7 +29,7 @@ export function LinhaDeAlternador({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Alternar ${titulo}`}
-        accessibilityHint={`Toque para ${valor ? "desativar" : "ativar"} o modo automático. ${apoio}`}
+        accessibilityHint={`Toque para ${valor ? "desativar" : "ativar"} esta opção. ${apoio}`}
         onPress={() => onChange(!valor)}
         style={estiloPressionado}
       >

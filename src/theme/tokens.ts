@@ -63,6 +63,9 @@ export const spacing = {
 
 export const dimensions = {
   touchTarget: 48,
+  currencyFieldHeight: 52,
+  checkboxSize: 24,
+  checkboxIcon: 18,
   toggleRowMinimumHeight: 56,
   collapsibleIconDiameter: 36,
   collapsibleIconSize: 20,
@@ -80,6 +83,7 @@ export const dimensions = {
 
 export const radii = {
   sm: 12,
+  checkbox: 6,
   field: 16,
   button: 20,
   card: 24,
@@ -91,6 +95,7 @@ export const typography = {
   sizes: {
     caption: 13,
     body: 16,
+    currency: 18,
     button: 16,
     section: 20,
     display: 32,

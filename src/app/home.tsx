@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+/* eslint-disable react-hooks/set-state-in-effect -- Existing navigation/animation refs or derived UI state are intentionally read in render/effects. */
+import { useEffect, useMemo, useState } from "react";
 import {
   AppState,
   Alert,
@@ -29,8 +30,9 @@ import {
   obterDataLocal,
 } from "@/lib/datas";
 import { lerListaJogadores } from "@/lib/importacao";
-import { useDadosPersistidosStore } from "@/store";
-import { spacing } from "@/theme";
+import { normalizarNomeJogador } from "@/lib/jogadores";
+import { limparStoresFutebol, useDadosPersistidosStore, useSorteioStore } from "@/store";
+import { colors, radii, spacing } from "@/theme";
 import type {
   AvisoImportacao,
   Nivel,
@@ -41,8 +43,9 @@ import type {
   TipoJogador,
   Vinculo,
   Jogador,
+  ResultadoDivisaoTimes,
 } from "@/types";
-import { resetarDados } from "@/db";
+import { obterSorteioSalvoBanco, resetarDados, setFutebolAtivoId } from "@/db";
 
 const ERRO_NOME_VAZIO = "Informe o nome do jogador.";
 const ERRO_NOME_DUPLICADO = "Já existe um jogador com esse nome.";
@@ -57,6 +60,7 @@ function determinarTipoJogador(
 
 export default function Home() {
   const router = useRouter();
+  const prepararSorteio = useSorteioStore((state) => state.preparar);
   const dados = useDadosPersistidosStore((state) => state.dados);
   const carregando = useDadosPersistidosStore((state) => state.carregando);
   const carregandoPresencas = useDadosPersistidosStore(
@@ -70,6 +74,10 @@ export default function Home() {
   const marcarPresenca = useDadosPersistidosStore(
     (state) => state.marcarPresenca,
   );
+  const marcarPagamentoMensalidade = useDadosPersistidosStore(
+    (state) => state.marcarPagamentoMensalidade,
+  );
+  const marcarPagamentoAvulso = useDadosPersistidosStore((state) => state.marcarPagamentoAvulso);
   const adicionarJogador = useDadosPersistidosStore(
     (state) => state.adicionarJogador,
   );
@@ -78,6 +86,9 @@ export default function Home() {
   );
   const editarJogador = useDadosPersistidosStore(
     (state) => state.editarJogador,
+  );
+  const excluirJogador = useDadosPersistidosStore(
+    (state) => state.excluirJogador,
   );
   const limparDados = useDadosPersistidosStore((state) => state.limpar);
   const definirErro = useDadosPersistidosStore((state) => state.definirErro);
@@ -90,18 +101,41 @@ export default function Home() {
   const [importacaoVisivel, setImportacaoVisivel] = useState(false);
   const [avisoImportacao, setAvisoImportacao] =
     useState<AvisoImportacao | null>(null);
+  const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [nome, setNome] = useState("");
   const [tipo, setTipo] = useState<TipoJogador>("linha");
   const [posicao, setPosicao] = useState<Posicao | null>(null);
   const [nivel, setNivel] = useState<Nivel | null>(null);
   const [vinculo, setVinculo] = useState<Vinculo>("mensalista");
   const [jogadorEmEdicao, setJogadorEmEdicao] = useState<string | null>(null);
+  const [adicionandoAvulso, setAdicionandoAvulso] = useState(false);
+  const [avulsoDuplicadoId, setAvulsoDuplicadoId] = useState<string | null>(null);
   const [erroNome, setErroNome] = useState<string | null>(null);
   const [erroFormulario, setErroFormulario] = useState<string | null>(null);
+  const [sorteioSalvoData, setSorteioSalvoData] =
+    useState<ResultadoDivisaoTimes | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    async function checarSorteio() {
+      if (!dados?.futebol?.id) {
+        setSorteioSalvoData(null);
+        return;
+      }
+      const res = await obterSorteioSalvoBanco(dados.futebol.id, data);
+      if (!cancelado) {
+        setSorteioSalvoData(res.sucesso ? res.dados : null);
+      }
+    }
+    void checarSorteio();
+    return () => {
+      cancelado = true;
+    };
+  }, [dados?.futebol?.id, data]);
 
   useEffect(() => {
     void carregar(data);
-  }, [carregar, data]);
+  }, [carregar, data, hoje]);
 
   useEffect(() => {
     const atualizarHoje = () => setHoje(obterDataLocal());
@@ -135,11 +169,14 @@ export default function Home() {
   const futebol = dados?.futebol;
   const diasSemana = futebol?.diasSemana ?? [];
   useEffect(() => {
+    const controlaMensalistas =
+      futebol?.controlePagamento === "mensalistas" || futebol?.controlePagamento === "ambos";
     if (!futebol?.controlaPresenca) setFiltro("todos");
-    if (futebol?.tipoCadastro !== "mensalistas_e_avulsos") {
+    if (!controlaMensalistas ||
+      (futebol?.tipoCadastro !== "mensalistas_e_avulsos" && filtroVinculo !== "pendentes")) {
       setFiltroVinculo("todos");
     }
-  }, [futebol?.controlaPresenca, futebol?.tipoCadastro]);
+  }, [futebol?.controlaPresenca, futebol?.tipoCadastro, futebol?.controlePagamento, filtroVinculo]);
 
   const dataJogoAtivo =
     futebol?.controlaPresenca
@@ -202,6 +239,8 @@ export default function Home() {
     setNivel(null);
     setVinculo("mensalista");
     setJogadorEmEdicao(null);
+    setAdicionandoAvulso(false);
+    setAvulsoDuplicadoId(null);
     setErroNome(null);
     setErroFormulario(null);
   }
@@ -223,7 +262,36 @@ export default function Home() {
     setFormularioVisivel(true);
   }
 
-  async function salvarJogador() {
+  function confirmarExclusaoJogador() {
+    if (!jogadorEmEdicao) return;
+    const jogador = dados?.jogadores.find((j) => j.id === jogadorEmEdicao);
+    const nomeJogador = jogador?.nome ?? nome;
+    Alert.alert(
+      "Excluir jogador?",
+      `Deseja remover “${nomeJogador}”? O histórico de presenças dele neste futebol será apagado. Essa ação não pode ser desfeita.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir jogador",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              const idParaExcluir = jogadorEmEdicao;
+              fecharFormulario();
+              const resultado = await excluirJogador(idParaExcluir);
+              if (!resultado.sucesso) {
+                Alert.alert("Erro ao excluir", resultado.mensagem);
+              } else {
+                setMensagemSucesso(`Jogador “${nomeJogador}” excluído.`);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }
+
+  async function salvarJogador(continuarAdicionando = false) {
     if (!dados) return;
     const vinculoAplicavel = determinarTipoJogador(
       dados.futebol?.tipoCadastro,
@@ -248,6 +316,12 @@ export default function Home() {
       return;
     }
     if (resultado.dados.motivo === "nome_duplicado") {
+      const existente = dados.jogadores.find((j) => normalizarNomeJogador(j.nome) === normalizarNomeJogador(nome));
+      if (adicionandoAvulso && existente?.vinculo === "avulso") {
+        setAvulsoDuplicadoId(existente.id);
+        setErroNome(null);
+        return;
+      }
       setErroNome(ERRO_NOME_DUPLICADO);
       return;
     }
@@ -260,6 +334,49 @@ export default function Home() {
       return;
     }
     setAvisoImportacao(null);
+    if (adicionandoAvulso && resultado.dados.jogador) {
+      const id = resultado.dados.jogador.id;
+      const nomeAvulso = resultado.dados.jogador.nome;
+      const chamada = await marcarPresenca(id, data, true);
+      if (!chamada.sucesso) { setErroFormulario(chamada.mensagem); return; }
+      if (chamada.sucesso && (dados.futebol?.controlePagamento === "avulsos" || dados.futebol?.controlePagamento === "ambos")) {
+        const valor = dados.futebol.avulsoEscolhidoCentavos ?? dados.futebol.avulsoSugeridoCentavos ?? 0;
+        const pagamento = await marcarPagamentoAvulso(id, data, valor, true);
+        if (!pagamento.sucesso) { setErroFormulario(pagamento.mensagem); return; }
+      }
+      // Recarrega dados para garantir que o avulso aparece na lista e o saldo é atualizado
+      await carregar(data);
+      if (continuarAdicionando) {
+        setNome(""); setTipo("linha"); setPosicao(null); setNivel(null); setErroNome(null); setErroFormulario(null); setAvulsoDuplicadoId(null);
+        setMensagemSucesso(`${nomeAvulso} adicionado ao jogo! ✓`);
+        setTimeout(() => setMensagemSucesso(null), 3000);
+        return;
+      }
+      setMensagemSucesso(`${nomeAvulso} adicionado ao jogo! ✓`);
+      setTimeout(() => setMensagemSucesso(null), 3000);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+    fecharFormulario();
+  }
+
+  async function salvarAvulso(continuar: boolean) { await salvarJogador(continuar); }
+
+  async function chamarAvulsoDuplicado() {
+    if (!avulsoDuplicadoId || !dados?.futebol) return;
+    const jogadorAvulso = dados.jogadores.find((j) => j.id === avulsoDuplicadoId);
+    const chamado = await marcarPresenca(avulsoDuplicadoId, data, true);
+    if (!chamado.sucesso) { setErroFormulario(chamado.mensagem); return; }
+    if (chamado.sucesso && (dados.futebol.controlePagamento === "avulsos" || dados.futebol.controlePagamento === "ambos")) {
+      const valor = dados.futebol.avulsoEscolhidoCentavos ?? dados.futebol.avulsoSugeridoCentavos ?? 0;
+      const pagamento = await marcarPagamentoAvulso(avulsoDuplicadoId, data, valor, true);
+      if (!pagamento.sucesso) Alert.alert("Não foi possível salvar", pagamento.mensagem);
+    }
+    if (jogadorAvulso) {
+      setMensagemSucesso(`${jogadorAvulso.nome} adicionado ao jogo! ✓`);
+      setTimeout(() => setMensagemSucesso(null), 3000);
+      await carregar(data);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
     fecharFormulario();
   }
 
@@ -326,6 +443,7 @@ export default function Home() {
                 definirErro(resultado.mensagem);
                 return;
               }
+              limparStoresFutebol();
               limparDados();
               router.replace("/onboarding");
             })();
@@ -346,22 +464,30 @@ export default function Home() {
             accessibilityLabel="Adicionar jogador"
             onPress={() => {
               setAvisoImportacao(null);
+              setMensagemSucesso(null);
               setFormularioVisivel(true);
             }}
           >
             Adicionar jogador
           </Botao>
+          {dados.futebol.tipoCadastro === "mensalistas_e_avulsos" ? <Botao variante="secundario" accessibilityLabel="Adicionar avulso ao jogo" onPress={() => { limparFormulario(); setMensagemSucesso(null); setAdicionandoAvulso(true); setVinculo("avulso"); setFormularioVisivel(true); }}>Adicionar avulso</Botao> : null}
           <Botao
             variante="secundario"
             accessibilityLabel="Importar lista de jogadores"
             onPress={() => {
               setAvisoImportacao(null);
+              setMensagemSucesso(null);
               setImportacaoVisivel(true);
             }}
           >
             Importar lista
           </Botao>
         </View>
+      ) : null}
+      {mensagemSucesso ? (
+        <Texto variante="corpo" cor="primary" style={styles.mensagemSucesso}>
+          {mensagemSucesso}
+        </Texto>
       ) : null}
       {carregando && !dados ? (
         <Texto variante="corpo">Carregando dados salvos...</Texto>
@@ -384,6 +510,7 @@ export default function Home() {
             filtroVinculo={filtroVinculo}
             jogadoresVisiveis={jogadoresVisiveis}
             totalPresentes={totalPresentes}
+            dataReferencia={hoje}
             onDataChange={(deslocamento) =>
               navegarData(deslocamento < 0 ? -1 : 1)
             }
@@ -391,22 +518,118 @@ export default function Home() {
             onFiltroChange={setFiltro}
             onFiltroVinculoChange={setFiltroVinculo}
             onPresencaChange={(jogadorId, presente) => {
-              void marcarPresenca(jogadorId, data, presente).then(
-                (resultado) => {
-                  if (!resultado.sucesso) {
-                    Alert.alert("Não foi possível salvar", resultado.mensagem);
-                  }
-                },
-              );
+              void marcarPresenca(jogadorId, data, presente).then(async (resultado) => {
+                if (!resultado.sucesso) { Alert.alert("Não foi possível salvar", resultado.mensagem); return; }
+                const jogador = dados.jogadores.find((item) => item.id === jogadorId);
+                const controlaAvulsos = dados.futebol?.controlePagamento === "avulsos" || dados.futebol?.controlePagamento === "ambos";
+                if (jogador?.vinculo === "avulso" && controlaAvulsos) {
+                  const valor = dados.futebol?.avulsoEscolhidoCentavos ?? dados.futebol?.avulsoSugeridoCentavos ?? 0;
+                  const pagamento = await marcarPagamentoAvulso(jogadorId, data, valor, presente);
+                  if (!pagamento.sucesso) Alert.alert("Não foi possível salvar", pagamento.mensagem);
+                }
+              });
+            }}
+            onPagamentoChange={(jogadorId, pago) => {
+              const jogador = dados.jogadores.find((item) => item.id === jogadorId);
+              if (jogador?.vinculo === "avulso") {
+                const valor = dados.futebol?.avulsoEscolhidoCentavos ?? dados.futebol?.avulsoSugeridoCentavos ?? 0;
+                void marcarPagamentoAvulso(jogadorId, data, valor, pago).then((resultado) => {
+                  if (!resultado.sucesso) Alert.alert("Não foi possível salvar", resultado.mensagem);
+                });
+                return;
+              }
+              const mensalidade = dados.futebol?.mensalidadeCentavos ?? 0;
+              const ciclo = dados.cicloInicio;
+              if (!ciclo) return;
+              void marcarPagamentoMensalidade(
+                jogadorId,
+                ciclo,
+                mensalidade,
+                pago,
+              ).then((resultado) => {
+                if (!resultado.sucesso) {
+                  Alert.alert("Não foi possível salvar", resultado.mensagem);
+                }
+              });
             }}
             onEditarJogador={iniciarEdicao}
+            onSair={() => { const nomeSaida = dados.futebol?.nome ?? ""; void (async () => { await setFutebolAtivoId(null); limparStoresFutebol(); router.dismissAll(); router.replace({ pathname: "/futebols", params: { saiu: nomeSaida } }); })(); }}
             onEditarFutebol={() =>
               router.push({
                 pathname: "/cadastro-futebol",
                 params: { modo: "edicao" },
               })
             }
+            sorteioSalvo={sorteioSalvoData}
+            onAbrirTimes={() => {
+              const jogadoresSorteio = dados.futebol?.controlaPresenca
+                ? dados.jogadores.filter((j) => dados.presencas[j.id] === true)
+                : dados.jogadores;
+              prepararSorteio({
+                jogadores: jogadoresSorteio.length > 0 ? jogadoresSorteio : (sorteioSalvoData ? [...sorteioSalvoData.times.flatMap(t => [...(t.goleiro ? [t.goleiro] : []), ...t.jogadoresLinha]), ...sorteioSalvoData.reservas] : []),
+                rotulo: dados.futebol?.nome ?? `Jogo de ${formatarCabecalhoData(data)}`,
+                jogadoresPorTime: dados.futebol?.jogadoresPorTime ?? null,
+                quantidadeTimes: dados.futebol?.quantidadeTimes ?? null,
+                futebolId: dados.futebol?.id ?? null,
+                dataJogo: data,
+                sorteioSalvo: sorteioSalvoData,
+              });
+              router.push("/resultado");
+            }}
           />
+          {(() => {
+            const jogadoresSorteio = dados.futebol?.controlaPresenca
+              ? dados.jogadores.filter((j) => dados.presencas[j.id] === true)
+              : dados.jogadores;
+
+            function abrirSorteio() {
+              prepararSorteio({
+                jogadores:
+                  jogadoresSorteio.length > 0
+                    ? jogadoresSorteio
+                    : sorteioSalvoData
+                      ? [
+                          ...sorteioSalvoData.times.flatMap((t) => [
+                            ...(t.goleiro ? [t.goleiro] : []),
+                            ...t.jogadoresLinha,
+                          ]),
+                          ...sorteioSalvoData.reservas,
+                        ]
+                      : [],
+                rotulo: dados?.futebol?.nome ?? `Jogo de ${formatarCabecalhoData(data)}`,
+                jogadoresPorTime: dados?.futebol?.jogadoresPorTime ?? null,
+                quantidadeTimes: dados?.futebol?.quantidadeTimes ?? null,
+                futebolId: dados?.futebol?.id ?? null,
+                dataJogo: data,
+                sorteioSalvo: sorteioSalvoData,
+              });
+              router.push("/resultado");
+            }
+
+            return (
+              <View style={styles.rodapeSorteio}>
+                <Botao
+                  variante="primario"
+                  accessibilityLabel={
+                    sorteioSalvoData
+                      ? `Ver times sorteados (${sorteioSalvoData.times.length} times)`
+                      : `Sortear times com ${jogadoresSorteio.length} jogadores`
+                  }
+                  desabilitado={!sorteioSalvoData && jogadoresSorteio.length < 2}
+                  onPress={abrirSorteio}
+                >
+                  {sorteioSalvoData
+                    ? `⚽ Ver / alterar times (${sorteioSalvoData.times.length} times)`
+                    : `🎲 Sortear times (${jogadoresSorteio.length} jogadores)`}
+                </Botao>
+                {!sorteioSalvoData && jogadoresSorteio.length < 2 ? (
+                  <Texto variante="legenda">
+                    Confirme pelo menos 2 jogadores para sortear.
+                  </Texto>
+                ) : null}
+              </View>
+            );
+          })()}
         </>
       ) : (
         <View style={styles.erroCarregamento}>
@@ -446,14 +669,19 @@ export default function Home() {
         tipo={tipo}
         posicao={posicao}
         nivel={nivel}
-        mostrarVinculo={dados?.futebol?.tipoCadastro === "mensalistas_e_avulsos"}
-        vinculo={vinculo}
+        vinculo={adicionandoAvulso ? "avulso" : vinculo}
+        mostrarVinculo={adicionandoAvulso ? false : dados?.futebol?.tipoCadastro === "mensalistas_e_avulsos"}
+        titulo={adicionandoAvulso ? `Adicionar avulso ao jogo de ${formatarCabecalhoData(data)}` : undefined}
+        rotuloSalvar={adicionandoAvulso ? "Adicionar ao jogo" : undefined}
+        onSalvarContinuar={adicionandoAvulso ? () => void salvarAvulso(true) : undefined}
+        onChamarDuplicado={avulsoDuplicadoId ? () => void chamarAvulsoDuplicado() : undefined}
         erroNome={erroNome}
         onNomeChange={(valor) => {
           setNome(valor);
           setErroNome(null);
         }}
         erroFormulario={erroFormulario}
+        mensagemSucesso={formularioVisivel ? mensagemSucesso : null}
         onTipoChange={(valor) => {
           setTipo(valor);
           setPosicao(valor === "goleiro" ? "goleiro" : null);
@@ -461,8 +689,9 @@ export default function Home() {
         onPosicaoChange={setPosicao}
         onNivelChange={setNivel}
         onVinculoChange={setVinculo}
-        onSalvar={() => void salvarJogador()}
+        onSalvar={() => void (adicionandoAvulso ? salvarAvulso(false) : salvarJogador())}
         onCancelar={fecharFormulario}
+        onExcluir={jogadorEmEdicao ? confirmarExclusaoJogador : undefined}
       />
       <ImportarListaSheet
         visivel={importacaoVisivel}
@@ -485,7 +714,15 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.md,
   },
+  rodapeSorteio: { gap: spacing.sm, paddingBottom: spacing.md },
   erroCarregamento: {
     gap: spacing.md,
+  },
+  mensagemSucesso: {
+    backgroundColor: colors.successBackground,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    textAlign: "center",
   },
 });

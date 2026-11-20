@@ -13,3 +13,5 @@ export {
   obterLimiteDataFutura,
   obterDataLocal,
 } from "./dataLocal";
+export { calcularCicloMensal, calcularInicioProximoCiclo } from "@/lib/ciclos";
+export type { CicloMensal } from "@/lib/ciclos";

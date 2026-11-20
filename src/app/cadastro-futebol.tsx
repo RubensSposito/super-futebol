@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs -- Existing navigation/animation refs or derived UI state are intentionally read in render/effects. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -14,9 +15,10 @@ import {
   useRouter,
 } from "expo-router";
 import { Botao, Texto } from "@/components/atoms";
-import { CampoComRotulo, SeletorDeOpcoes } from "@/components/molecules";
+import { CampoComRotulo, CampoMoeda, SeletorDeOpcoes } from "@/components/molecules";
 import {
-  AgendaFutebolSheet,
+  CartaoQuadraEAgenda,
+  CampoValorComSugestao,
   CartaoSaldoDoMes,
   ResumoFinanceiro,
 } from "@/components/organisms";
@@ -24,28 +26,22 @@ import { TelaBase } from "@/components/templates";
 import {
   CONTROLES_PAGAMENTO_MENSALISTAS,
   CONTROLES_PAGAMENTO_MISTO,
-  DIAS_SEMANA,
-  FREQUENCIAS,
   TIPOS_CADASTRO,
 } from "@/constants";
 import {
   calcularResumoFinanceiro,
+  calcularJogosPorMes,
   formatarMoedaPtBr,
   lerMoedaPtBr,
 } from "@/lib/financeiro";
 import { obterDataLocal, obterJogoAtivo } from "@/lib/datas";
-import { useDadosPersistidosStore, useRascunhoCadastroStore } from "@/store";
-import { atualizarFutebol, carregarDadosHome } from "@/db";
-import {
-  borders,
-  colors,
-  dimensions,
-  radii,
-  spacing,
-} from "@/theme";
+import { useDadosPersistidosStore, useRascunhoCadastroStore, expandirRascunhoFutebol } from "@/store";
+import { atualizarFutebol, carregarDadosHome, nomeFutebolDisponivel } from "@/db";
+import { borders, colors, radii, spacing } from "@/theme";
+import { normalizarNomeFutebol } from "@/lib/futebols";
 import type {
   ControlePagamento,
-  FrequenciaFutebol,
+  AgendaFutebol,
   RascunhoFutebol,
   TipoCadastro,
   Futebol,
@@ -53,12 +49,21 @@ import type {
 } from "@/types";
 
 const PADRAO: RascunhoFutebol = {
+  nome: "",
   quantidadeJogadores: 14,
   quantidadeMensalistas: null,
   quantidadeAvulsos: null,
   tipoCadastro: "basico",
   controlaPresenca: true,
   controlePagamento: "nenhum",
+  agenda: {
+    diasSemana: [],
+    frequencia: null,
+    horario: null,
+    vencimentoQuadra: "",
+  },
+  jogadoresPorTime: null,
+  quantidadeTimes: null,
   valorQuadraCentavos: null,
   mensalidadeSugeridaCentavos: null,
   mensalidadeCentavos: null,
@@ -66,9 +71,6 @@ const PADRAO: RascunhoFutebol = {
   avulsoSugeridoCentavos: null,
   nomeQuadra: null,
   endereco: null,
-  diasSemana: [],
-  frequencia: null,
-  horario: null,
 };
 
 const OPCOES_PRESENCA = [
@@ -95,66 +97,54 @@ function erroQuantidade(valor: number | null, minimo: number): string | null {
 }
 
 function erroMoeda(valor: string): string | null {
-  return lerMoedaPtBr(valor) === null ? "Informe um valor válido em reais." : null;
-}
-
-function formatarResumoAgenda(
-  diasSemana: readonly number[],
-  frequencia: FrequenciaFutebol | null,
-  horario: string | null,
-): string {
-  const dias = diasSemana
-    .map((valor) => DIAS_SEMANA.find((opcao) => opcao.value === valor)?.label)
-    .filter((dia) => dia !== undefined)
-    .join(" e ");
-  const frequenciaLabel = FREQUENCIAS.find(
-    (opcao) => opcao.value === frequencia,
-  )?.label;
-  return [
-    dias || null,
-    frequenciaLabel ?? null,
-    horario,
-  ]
-    .filter((parte): parte is string => parte !== null)
-    .join(" · ");
+  const centavos = lerMoedaPtBr(valor);
+  return centavos === null || centavos <= 0 || centavos > 9_999_999
+    ? "Informe um valor maior que zero."
+    : null;
 }
 
 function assinaturaFormulario(
+  nomeFutebol: string,
   tipoCadastro: TipoCadastro,
   quantidadeBasica: string,
   mensalistas: string,
   avulsos: string,
   controlaPresenca: boolean,
   controlePagamento: ControlePagamento,
+  agenda: AgendaFutebol,
   valorQuadra: string,
   mensalidade: string,
   avulso: string,
   nomeQuadra: string,
   endereco: string,
-  diasSemana: readonly number[],
-  frequencia: FrequenciaFutebol | null,
-  horario: string | null,
+  jogadoresPorTime = "",
+  quantidadeTimes = "",
 ): string {
   return JSON.stringify([
+    nomeFutebol.trim(),
     tipoCadastro,
     quantidadeBasica,
     mensalistas,
     avulsos,
     controlaPresenca,
     controlePagamento,
+    agenda.vencimentoQuadra,
     valorQuadra,
     mensalidade,
     avulso,
     nomeQuadra.trim(),
     endereco.trim(),
-    [...diasSemana].sort((a, b) => a - b),
-    frequencia,
-    horario,
+    [...agenda.diasSemana].sort((a, b) => a - b),
+    agenda.frequencia,
+    agenda.horario,
+    jogadoresPorTime,
+    quantidadeTimes,
   ]);
 }
 
 function assinaturaFutebol(futebol: Futebol): string {
   return assinaturaFormulario(
+    futebol.nome,
     futebol.tipoCadastro,
     futebol.tipoCadastro === "basico"
       ? String(futebol.quantidadeJogadores)
@@ -167,14 +157,19 @@ function assinaturaFutebol(futebol: Futebol): string {
       : String(futebol.quantidadeAvulsos),
     futebol.controlaPresenca,
     futebol.controlePagamento,
+    {
+      diasSemana: futebol.diasSemana,
+      frequencia: futebol.frequencia,
+      horario: futebol.horario,
+      vencimentoQuadra: futebol.vencimentoQuadra,
+    },
     valorTexto(futebol.valorQuadraCentavos),
     valorTexto(futebol.mensalidadeCentavos),
     valorTexto(futebol.avulsoEscolhidoCentavos),
     futebol.nomeQuadra ?? "",
     futebol.endereco ?? "",
-    futebol.diasSemana,
-    futebol.frequencia,
-    futebol.horario,
+    futebol.jogadoresPorTime === null ? "" : String(futebol.jogadoresPorTime),
+    futebol.quantidadeTimes === null ? "" : String(futebol.quantidadeTimes),
   );
 }
 
@@ -208,9 +203,12 @@ export default function CadastroFutebol() {
   const carregarDadosSalvos = useDadosPersistidosStore(
     (state) => state.carregar,
   );
+  const futebolAtivoId = useDadosPersistidosStore((state) => state.futebolAtivoId);
   const rascunhoSalvo = useRascunhoCadastroStore((state) => state.futebol);
   const salvarFutebol = useRascunhoCadastroStore((state) => state.salvarFutebol);
   const inicial = rascunhoSalvo ?? PADRAO;
+  const [nomeFutebol, setNomeFutebol] = useState(inicial.nome);
+  const [erroNomeFutebol, setErroNomeFutebol] = useState<string | null>(null);
   const [tipoCadastro, setTipoCadastro] = useState<TipoCadastro>(
     inicial.tipoCadastro,
   );
@@ -234,6 +232,8 @@ export default function CadastroFutebol() {
   );
   const [controlePagamento, setControlePagamento] =
     useState<ControlePagamento>(inicial.controlePagamento);
+  const [jogadoresPorTimeTexto, setJogadoresPorTimeTexto] = useState(inicial.jogadoresPorTime ? String(inicial.jogadoresPorTime) : "");
+  const [quantidadeTimesTexto, setQuantidadeTimesTexto] = useState(inicial.quantidadeTimes ? String(inicial.quantidadeTimes) : "");
   const [valorQuadraTexto, setValorQuadraTexto] = useState(
     valorTexto(inicial.valorQuadraCentavos),
   );
@@ -253,14 +253,7 @@ export default function CadastroFutebol() {
   );
   const [nomeQuadra, setNomeQuadra] = useState(inicial.nomeQuadra ?? "");
   const [endereco, setEndereco] = useState(inicial.endereco ?? "");
-  const [diasSemana, setDiasSemana] = useState<number[]>(
-    inicial.diasSemana,
-  );
-  const [frequencia, setFrequencia] = useState<FrequenciaFutebol | null>(
-    inicial.frequencia,
-  );
-  const [horario, setHorario] = useState<string | null>(inicial.horario);
-  const [agendaVisivel, setAgendaVisivel] = useState(false);
+  const [agenda, setAgenda] = useState<AgendaFutebol>(inicial.agenda);
   const [carregandoEdicao, setCarregandoEdicao] = useState(modoEdicao);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
@@ -275,7 +268,8 @@ export default function CadastroFutebol() {
     edicaoConcluidaRef.current = false;
     let ativo = true;
     void (async () => {
-      const resultado = await carregarDadosHome(obterDataLocal());
+      if (futebolAtivoId === null) { setErroEdicao("Não foi possível encontrar o futebol ativo."); setCarregandoEdicao(false); return; }
+      const resultado = await carregarDadosHome(futebolAtivoId, obterDataLocal());
       if (!ativo) return;
       if (!resultado.sucesso || !resultado.dados.futebol) {
         setErroEdicao(
@@ -288,6 +282,7 @@ export default function CadastroFutebol() {
       }
 
       const futebol = resultado.dados.futebol;
+      setNomeFutebol(futebol.nome);
       setTipoCadastro(futebol.tipoCadastro);
       setQuantidadeBasicaTexto(
         futebol.tipoCadastro === "basico"
@@ -306,24 +301,43 @@ export default function CadastroFutebol() {
       );
       setControlaPresenca(futebol.controlaPresenca);
       setControlePagamento(futebol.controlePagamento);
+      setJogadoresPorTimeTexto(futebol.jogadoresPorTime ? String(futebol.jogadoresPorTime) : "");
+      setQuantidadeTimesTexto(futebol.quantidadeTimes ? String(futebol.quantidadeTimes) : "");
       setValorQuadraTexto(valorTexto(futebol.valorQuadraCentavos));
       setMensalidadeTexto(valorTexto(futebol.mensalidadeCentavos));
       setAvulsoTexto(valorTexto(futebol.avulsoEscolhidoCentavos));
+      const resumoCalculado = futebol.valorQuadraCentavos !== null &&
+        futebol.quantidadeMensalistas !== null &&
+        futebol.quantidadeMensalistas > 0 &&
+        futebol.quantidadeAvulsos !== null &&
+        futebol.quantidadeAvulsos >= 0
+        ? calcularResumoFinanceiro(
+            futebol.valorQuadraCentavos,
+            futebol.quantidadeMensalistas,
+            futebol.quantidadeAvulsos,
+            null,
+            null,
+            calcularJogosPorMes(futebol.frequencia, futebol.diasSemana),
+          )
+        : null;
       setMensalidadeCustomizada(
         futebol.mensalidadeCentavos !== null &&
           futebol.mensalidadeCentavos !==
-            futebol.mensalidadeSugeridaCentavos,
+            resumoCalculado?.mensalidadeSugeridaCentavos,
       );
       setAvulsoCustomizado(
         futebol.avulsoEscolhidoCentavos !== null &&
           futebol.avulsoEscolhidoCentavos !==
-            futebol.avulsoSugeridoCentavos,
+            resumoCalculado?.avulsoSugeridoCentavos,
       );
       setNomeQuadra(futebol.nomeQuadra ?? "");
       setEndereco(futebol.endereco ?? "");
-      setDiasSemana([...futebol.diasSemana]);
-      setFrequencia(futebol.frequencia);
-      setHorario(futebol.horario);
+      setAgenda({
+        diasSemana: [...futebol.diasSemana],
+        frequencia: futebol.frequencia,
+        horario: futebol.horario,
+        vencimentoQuadra: futebol.vencimentoQuadra,
+      });
       setJogadoresSalvos(resultado.dados.jogadores);
       assinaturaInicialRef.current = assinaturaFutebol(futebol);
       tipoInicialRef.current = futebol.tipoCadastro;
@@ -333,7 +347,7 @@ export default function CadastroFutebol() {
     return () => {
       ativo = false;
     };
-  }, [carregarDadosHome, modoEdicao]);
+  }, [modoEdicao, futebolAtivoId]);
 
   const quantidadeBasica = inteiro(quantidadeBasicaTexto);
   const quantidadeMensalistas =
@@ -357,6 +371,9 @@ export default function CadastroFutebol() {
   const valorQuadraCentavos = lerMoedaPtBr(valorQuadraTexto);
   const mensalidadeEscolhidaCentavos = lerMoedaPtBr(mensalidadeTexto);
   const avulsoEscolhidoCentavos = lerMoedaPtBr(avulsoTexto);
+  const erroVencimento = controlarMensalidade && !agenda.vencimentoQuadra
+    ? "Defina o vencimento da quadra"
+    : null;
   const contagensValidas =
     tipoCadastro === "basico"
       ? quantidadeBasica !== null &&
@@ -367,6 +384,11 @@ export default function CadastroFutebol() {
         quantidadeAvulsos !== null &&
         quantidadeAvulsos >= 0 &&
         (totalJogadores ?? 0) <= 100;
+
+  const jogosPorMesCalculado = calcularJogosPorMes(
+    agenda.frequencia,
+    agenda.diasSemana,
+  );
 
   const resumoBase = useMemo(() => {
     if (
@@ -386,26 +408,35 @@ export default function CadastroFutebol() {
       quantidadeAvulsos,
       null,
       null,
+      jogosPorMesCalculado,
     );
   }, [
+    jogosPorMesCalculado,
     quantidadeAvulsos,
     quantidadeMensalistas,
     totalJogadores,
     valorQuadraCentavos,
   ]);
 
-  const sugestaoAvulso =
-    controlarAvulsos ? resumoBase?.avulsoSugeridoCentavos ?? null : null;
-  const sugestaoMensalidade =
-    controlarMensalidade
-      ? resumoBase?.mensalidadeSugeridaCentavos ?? null
-      : null;
+  const avulsoSugeridoCalculado = resumoBase?.avulsoSugeridoCentavos ?? null;
+  const mensalidadeSugeridaCalculada =
+    resumoBase?.mensalidadeSugeridaCentavos ?? null;
+  const sugestaoAvulso = controlarAvulsos &&
+    avulsoSugeridoCalculado !== null &&
+    avulsoSugeridoCalculado > 0 &&
+    avulsoSugeridoCalculado <= 9_999_999
+    ? avulsoSugeridoCalculado
+    : null;
+  const sugestaoMensalidade = controlarMensalidade &&
+    mensalidadeSugeridaCalculada !== null &&
+    mensalidadeSugeridaCalculada > 0 &&
+    mensalidadeSugeridaCalculada <= 9_999_999
+    ? mensalidadeSugeridaCalculada
+    : null;
   const mensalidadeCalculadaCentavos =
-    mensalidadeEscolhidaCentavos ??
-    (!mensalidadeCustomizada ? sugestaoMensalidade : null);
+    mensalidadeCustomizada ? mensalidadeEscolhidaCentavos : sugestaoMensalidade;
   const avulsoCalculadoCentavos =
-    avulsoEscolhidoCentavos ??
-    (!avulsoCustomizado ? sugestaoAvulso : null);
+    avulsoCustomizado ? avulsoEscolhidoCentavos : sugestaoAvulso;
   const resumoFinanceiro = useMemo(() => {
     if (
       !resumoBase ||
@@ -419,37 +450,19 @@ export default function CadastroFutebol() {
       valorQuadraCentavos,
       quantidadeMensalistas,
       quantidadeAvulsos,
-      mensalidadeCalculadaCentavos,
-      avulsoCalculadoCentavos,
+      mensalidadeCalculadaCentavos ?? 0,
+      avulsoCalculadoCentavos ?? 0,
+      jogosPorMesCalculado,
     );
   }, [
     avulsoCalculadoCentavos,
+    jogosPorMesCalculado,
     mensalidadeCalculadaCentavos,
     quantidadeAvulsos,
     quantidadeMensalistas,
     resumoBase,
     valorQuadraCentavos,
   ]);
-
-  useEffect(() => {
-    if (
-      !mensalidadeCustomizada &&
-      sugestaoMensalidade !== null &&
-      mensalidadeTexto !== valorTexto(sugestaoMensalidade)
-    ) {
-      setMensalidadeTexto(valorTexto(sugestaoMensalidade));
-    }
-  }, [mensalidadeCustomizada, mensalidadeTexto, sugestaoMensalidade]);
-
-  useEffect(() => {
-    if (
-      !avulsoCustomizado &&
-      sugestaoAvulso !== null &&
-      avulsoTexto !== valorTexto(sugestaoAvulso)
-    ) {
-      setAvulsoTexto(valorTexto(sugestaoAvulso));
-    }
-  }, [avulsoCustomizado, avulsoTexto, sugestaoAvulso]);
 
   const quantidadeMensalistasErro =
     tipoCadastro === "mensalistas_e_avulsos" ||
@@ -469,40 +482,46 @@ export default function CadastroFutebol() {
       ? "O total não pode passar de 100 jogadores."
       : null;
   const valorQuadraErro =
-    controlePagamento !== "nenhum" && valorQuadraCentavos === null
-      ? erroMoeda(valorQuadraTexto)
+    controlePagamento !== "nenhum" && (valorQuadraCentavos === null || valorQuadraCentavos <= 0 || valorQuadraCentavos > 9_999_999)
+      ? valorQuadraTexto === "" ? "Informe um valor maior que zero." : erroMoeda(valorQuadraTexto)
       : null;
   const mensalidadeErro =
-    controlarMensalidade && mensalidadeCalculadaCentavos === null
-      ? erroMoeda(mensalidadeTexto)
+    controlarMensalidade && (mensalidadeCalculadaCentavos === null || mensalidadeCalculadaCentavos <= 0)
+      ? "Informe um valor maior que zero."
       : null;
   const avulsoErro =
-    controlarAvulsos && avulsoCalculadoCentavos === null
-      ? erroMoeda(avulsoTexto)
+    controlarAvulsos && (avulsoCalculadoCentavos === null || avulsoCalculadoCentavos <= 0)
+      ? "Informe um valor maior que zero."
       : null;
 
+  const nomeNormalizado = normalizarNomeFutebol(nomeFutebol);
   const valido =
+    nomeNormalizado.length >= 2 && nomeNormalizado.length <= 40 &&
     contagensValidas &&
     (tipoCadastro !== "mensalistas_e_avulsos" || totalErro === null) &&
     (controlePagamento === "nenhum" ||
-      (valorQuadraCentavos !== null &&
-      (!controlarMensalidade || mensalidadeCalculadaCentavos !== null) &&
-      (!controlarAvulsos || avulsoCalculadoCentavos !== null)));
+      (valorQuadraCentavos !== null && valorQuadraCentavos > 0 && valorQuadraCentavos <= 9_999_999 &&
+      (!controlarMensalidade || (mensalidadeCalculadaCentavos !== null && mensalidadeCalculadaCentavos > 0 && mensalidadeCalculadaCentavos <= 9_999_999)) &&
+      (!controlarAvulsos || (avulsoCalculadoCentavos !== null && avulsoCalculadoCentavos > 0 && avulsoCalculadoCentavos <= 9_999_999)))) &&
+    erroVencimento === null &&
+    (jogadoresPorTimeTexto.trim() === "" || (inteiro(jogadoresPorTimeTexto) !== null && inteiro(jogadoresPorTimeTexto)! >= 2 && inteiro(jogadoresPorTimeTexto)! <= 22)) &&
+    (quantidadeTimesTexto.trim() === "" || (inteiro(quantidadeTimesTexto) !== null && inteiro(quantidadeTimesTexto)! >= 2 && inteiro(quantidadeTimesTexto)! <= 12));
   const assinaturaAtual = assinaturaFormulario(
+    nomeFutebol,
     tipoCadastro,
     quantidadeBasicaTexto,
     mensalistasTexto,
     avulsosTexto,
     controlaPresenca,
     controlePagamento,
+    agenda,
     valorQuadraTexto,
-    mensalidadeTexto,
-    avulsoTexto,
+    mensalidadeCalculadaCentavos === null ? "" : valorTexto(mensalidadeCalculadaCentavos),
+    avulsoCalculadoCentavos === null ? "" : valorTexto(avulsoCalculadoCentavos),
     nomeQuadra,
     endereco,
-    diasSemana,
-    frequencia,
-    horario,
+    jogadoresPorTimeTexto,
+    quantidadeTimesTexto,
   );
   const alteracoesPendentes =
     modoEdicao &&
@@ -602,6 +621,7 @@ export default function CadastroFutebol() {
       controlarMensalidade && mensalidadeCalculadaCentavos !== null;
     const usarAvulso = controlarAvulsos && avulsoCalculadoCentavos !== null;
     return {
+      nome: normalizarNomeFutebol(nomeFutebol),
       quantidadeJogadores: totalJogadores,
       quantidadeMensalistas:
         tipoCadastro === "basico" ? null : quantidadeMensalistas,
@@ -610,6 +630,9 @@ export default function CadastroFutebol() {
       tipoCadastro,
       controlaPresenca,
       controlePagamento,
+      agenda,
+      jogadoresPorTime: inteiro(jogadoresPorTimeTexto),
+      quantidadeTimes: inteiro(quantidadeTimesTexto),
       valorQuadraCentavos:
         controlePagamento === "nenhum" ? null : valorQuadraCentavos,
       mensalidadeSugeridaCentavos: usarMensalidade
@@ -628,18 +651,19 @@ export default function CadastroFutebol() {
           : null,
       nomeQuadra: nomeQuadra.trim() || null,
       endereco: endereco.trim() || null,
-      diasSemana,
-      frequencia,
-      horario,
     };
   }
 
   async function salvarEdicao(futebol: RascunhoFutebol) {
     const tipoAnterior = tipoInicialRef.current;
-    if (!tipoAnterior) return;
+    if (!tipoAnterior || futebolAtivoId === null) return;
     setSalvandoEdicao(true);
     setErroEdicao(null);
-    const resultado = await atualizarFutebol(futebol, tipoAnterior);
+    const resultado = await atualizarFutebol(
+      futebolAtivoId,
+      expandirRascunhoFutebol(futebol),
+      tipoAnterior,
+    );
     setSalvandoEdicao(false);
     if (!resultado.sucesso) {
       setErroEdicao(resultado.mensagem);
@@ -649,15 +673,19 @@ export default function CadastroFutebol() {
     assinaturaInicialRef.current = assinaturaAtual;
     tipoInicialRef.current = futebol.tipoCadastro;
     edicaoConcluidaRef.current = true;
-    const dataJogoAtivo = obterJogoAtivo(obterDataLocal(), futebol.diasSemana);
-    await carregarDadosSalvos(dataJogoAtivo);
+    const dataJogoAtivo = obterJogoAtivo(
+      obterDataLocal(),
+      futebol.agenda.diasSemana,
+    );
+    await carregarDadosSalvos(dataJogoAtivo, futebolAtivoId);
     desabilitarProtecaoRemocao();
     router.back();
   }
 
-  function continuar() {
+  async function continuar() {
     const futebol = criarRascunhoAtual();
     if (!futebol) return;
+    if (!(await nomeFutebolDisponivel(futebol.nome, modoEdicao ? futebolAtivoId ?? undefined : undefined))) { setErroNomeFutebol("Já existe um futebol com esse nome."); return; }
     if (modoEdicao) {
       const tipoAnterior = tipoInicialRef.current;
       if (tipoAnterior && tipoAnterior !== futebol.tipoCadastro) {
@@ -682,11 +710,12 @@ export default function CadastroFutebol() {
       return;
     }
 
+    // Salva no rascunho em memória
     salvarFutebol(futebol);
+
     router.push("/cadastro-jogadores");
   }
 
-  const resumoAgenda = formatarResumoAgenda(diasSemana, frequencia, horario);
   const formulario = (
     <>
       <View style={styles.introducao}>
@@ -699,6 +728,14 @@ export default function CadastroFutebol() {
             : "Defina como seu grupo será organizado. Você poderá cadastrar os jogadores na próxima etapa."}
         </Texto>
       </View>
+      <CampoComRotulo
+        rotulo="Nome do futebol"
+        accessibilityLabel="Nome do futebol"
+        placeholder="Exemplo: Pelada de quarta"
+        valor={nomeFutebol}
+        mensagemErro={erroNomeFutebol ?? (nomeNormalizado.length === 0 ? "Informe o nome do futebol." : nomeNormalizado.length < 2 ? "Use pelo menos 2 caracteres." : nomeNormalizado.length > 40 ? "Use até 40 caracteres." : null)}
+        onChangeText={(valor) => { setNomeFutebol(valor); setErroNomeFutebol(null); }}
+      />
       <SeletorDeOpcoes
         rotulo="Tipo de cadastro"
         opcoes={TIPOS_CADASTRO}
@@ -716,15 +753,18 @@ export default function CadastroFutebol() {
             onChangeText={setMensalistasTexto}
           />
           <CampoComRotulo
-            rotulo="Quantos avulsos?"
-            accessibilityLabel="Quantidade de avulsos"
+            rotulo="Avulsos por partida"
+            accessibilityLabel="Avulsos por partida"
             valor={avulsosTexto}
             keyboardType="number-pad"
             mensagemErro={quantidadeAvulsosErro}
             onChangeText={setAvulsosTexto}
           />
+          <Texto variante="legenda">
+            Quantidade prevista por jogo; usada na previsão.
+          </Texto>
           <Texto variante="corpo">
-            Total de jogadores: {totalJogadores ?? "—"}
+            Jogadores por partida (estimativa): {totalJogadores ?? "—"}
           </Texto>
           {totalErro ? (
             <Texto variante="legenda" cor="error">
@@ -767,134 +807,8 @@ export default function CadastroFutebol() {
           onChange={alterarControlePagamento}
         />
       ) : null}
-      {controlePagamento !== "nenhum" &&
-      tipoCadastro !== "basico" ? (
-        <View style={styles.financeiro}>
-          <CampoComRotulo
-            rotulo="Valor da quadra (R$ por mês)"
-            accessibilityLabel="Valor da quadra por mês em reais"
-            valor={valorQuadraTexto}
-            placeholder="Ex.: R$ 1.000,00"
-            keyboardType="decimal-pad"
-            mensagemErro={valorQuadraErro}
-            onChangeText={setValorQuadraTexto}
-          />
-          {controlarMensalidade ? (
-            <>
-              <View style={styles.sugestao}>
-                <View style={styles.textoSugestao}>
-                  <Texto variante="legenda">Valor sugerido por mês</Texto>
-                  <Texto variante="corpo">
-                    {sugestaoMensalidade === null
-                      ? "Preencha a quadra e as quantidades."
-                      : formatarMoedaPtBr(sugestaoMensalidade)}
-                  </Texto>
-                </View>
-                <Botao
-                  variante="secundario"
-                  accessibilityLabel="Usar mensalidade sugerida"
-                  desabilitado={sugestaoMensalidade === null}
-                  onPress={() => {
-                    if (sugestaoMensalidade !== null) {
-                      setMensalidadeTexto(valorTexto(sugestaoMensalidade));
-                      setMensalidadeCustomizada(false);
-                    }
-                  }}
-                >
-                  Usar sugerido
-                </Botao>
-              </View>
-              <CampoComRotulo
-                rotulo="Valor que vou cobrar (mensalidade)"
-                accessibilityLabel="Valor escolhido da mensalidade em reais"
-                valor={mensalidadeTexto}
-                placeholder="Ex.: R$ 100,00"
-                keyboardType="decimal-pad"
-                mensagemErro={mensalidadeErro}
-                onChangeText={(valor) => {
-                  setMensalidadeTexto(valor);
-                  setMensalidadeCustomizada(true);
-                }}
-              />
-            </>
-          ) : null}
-          {controlarAvulsos ? (
-            <>
-              <Texto variante="legenda">
-                O avulso por jogo costuma custar mais do que a parte mensal de
-                cada jogador, incentivando o fechamento mensal.
-              </Texto>
-              <View style={styles.sugestao}>
-                <View style={styles.textoSugestao}>
-                  <Texto variante="legenda">Valor sugerido por jogo</Texto>
-                  <Texto variante="corpo">
-                    {sugestaoAvulso === null
-                      ? "Preencha a quadra e as quantidades."
-                      : formatarMoedaPtBr(sugestaoAvulso)}
-                  </Texto>
-                </View>
-                <Botao
-                  variante="secundario"
-                  accessibilityLabel="Usar valor avulso sugerido"
-                  desabilitado={sugestaoAvulso === null}
-                  onPress={() => {
-                    if (sugestaoAvulso !== null) {
-                      setAvulsoTexto(valorTexto(sugestaoAvulso));
-                      setAvulsoCustomizado(false);
-                    }
-                  }}
-                >
-                  Usar sugerido
-                </Botao>
-              </View>
-              <CampoComRotulo
-                rotulo="Valor que vou cobrar (avulso por jogo)"
-                accessibilityLabel="Valor escolhido do avulso por jogo em reais"
-                valor={avulsoTexto}
-                placeholder="Ex.: R$ 67,00"
-                keyboardType="decimal-pad"
-                mensagemErro={avulsoErro}
-                onChangeText={(valor) => {
-                  setAvulsoTexto(valor);
-                  setAvulsoCustomizado(true);
-                }}
-              />
-            </>
-          ) : null}
-          {resumoFinanceiro &&
-          valorQuadraCentavos !== null &&
-          (!controlarMensalidade ||
-            mensalidadeCalculadaCentavos !== null) &&
-          (!controlarAvulsos || avulsoCalculadoCentavos !== null) ? (
-            <>
-              <ResumoFinanceiro
-                resumo={resumoFinanceiro}
-                mostrarMensalistas={controlarMensalidade}
-                mostrarAvulsos={controlarAvulsos}
-              />
-              <CartaoSaldoDoMes
-                modo="previsao"
-                mensalistasCadastrados={quantidadeMensalistas ?? 0}
-                mensalistasMeta={quantidadeMensalistas ?? 0}
-                avulsosInformados={quantidadeAvulsos ?? 0}
-                mensalidadeCentavos={
-                  controlarMensalidade ? mensalidadeCalculadaCentavos : null
-                }
-                valorAvulsoCentavos={
-                  controlarAvulsos ? avulsoCalculadoCentavos : null
-                }
-                valorQuadraCentavos={valorQuadraCentavos}
-                diasSemana={diasSemana}
-                frequencia={frequencia}
-                mostrarMensalistas={controlarMensalidade}
-                mostrarAvulsos={controlarAvulsos}
-              />
-            </>
-          ) : null}
-        </View>
-      ) : null}
-      <View style={styles.opcionais}>
-        <Texto variante="secao">Dados do futebol (opcional)</Texto>
+      <View style={styles.quadraEAgenda}>
+        <Texto variante="secao">Quadra e agenda</Texto>
         <CampoComRotulo
           rotulo="Nome da quadra"
           accessibilityLabel="Nome da quadra"
@@ -907,17 +821,110 @@ export default function CadastroFutebol() {
           valor={endereco}
           onChangeText={setEndereco}
         />
-        <Botao
-          variante="secundario"
-          accessibilityLabel={
-            resumoAgenda
-              ? `Editar agenda: ${resumoAgenda}`
-              : "Definir dia, frequência e horário"
-          }
-          onPress={() => setAgendaVisivel(true)}
-        >
-          {resumoAgenda || "Definir dia, frequência e horário"}
-        </Botao>
+        <CartaoQuadraEAgenda
+          agenda={agenda}
+          temDadosQuadra={Boolean(nomeQuadra.trim() || endereco.trim())}
+          vencimentoObrigatorio={controlarMensalidade}
+          erroVencimento={erroVencimento}
+          onSalvar={setAgenda}
+        />
+      </View>
+      {controlePagamento !== "nenhum" &&
+      tipoCadastro !== "basico" ? (
+        <View style={styles.financeiro}>
+          <CampoMoeda
+            rotulo="Valor da quadra ou campo (R$ por mês)"
+            accessibilityLabel="Valor da quadra ou campo por mês em reais"
+            valorCentavos={valorQuadraCentavos}
+            mensagemErro={valorQuadraErro}
+            onChange={(valor) => setValorQuadraTexto(valor === null ? "" : formatarMoedaPtBr(valor))}
+          />
+          {controlarMensalidade ? (
+            <>
+              <CampoValorComSugestao
+                rotulo="Mensalidade por mensalista (R$)"
+                accessibilityLabel="Mensalidade por mensalista em reais"
+                nomeValor="mensalidade"
+                accessibilityLabelZerar="Zerar valor da mensalidade"
+                valorCentavos={mensalidadeCalculadaCentavos}
+                valorSugeridoCentavos={sugestaoMensalidade}
+                textoApoio="Preencha o valor da quadra e as quantidades para ver a sugestão."
+                mensagemErro={mensalidadeErro}
+                onChange={(valor, digitado) => {
+                  setMensalidadeTexto(valor === null ? "" : formatarMoedaPtBr(valor));
+                  if (digitado) setMensalidadeCustomizada(true);
+                }}
+                onUsarSugestao={() => {
+                  if (sugestaoMensalidade !== null) {
+                    setMensalidadeTexto(valorTexto(sugestaoMensalidade));
+                    setMensalidadeCustomizada(false);
+                  }
+                }}
+              />
+            </>
+          ) : null}
+          {controlarAvulsos ? (
+            <>
+              <Texto variante="legenda">
+                O valor do avulso é calculado por jogo a partir do custo da quadra e da quantidade de participantes.
+              </Texto>
+              <CampoValorComSugestao
+                rotulo="Valor do avulso por jogo (R$)"
+                accessibilityLabel="Valor do avulso por jogo em reais"
+                nomeValor="o valor do avulso por jogo"
+                accessibilityLabelZerar="Zerar valor do avulso por jogo"
+                valorCentavos={avulsoCalculadoCentavos}
+                valorSugeridoCentavos={sugestaoAvulso}
+                textoApoio="Preencha o valor da quadra e as quantidades para ver a sugestão."
+                mensagemErro={avulsoErro}
+                onChange={(valor, digitado) => {
+                  setAvulsoTexto(valor === null ? "" : formatarMoedaPtBr(valor));
+                  if (digitado) setAvulsoCustomizado(true);
+                }}
+                onUsarSugestao={() => {
+                  if (sugestaoAvulso !== null) {
+                    setAvulsoTexto(valorTexto(sugestaoAvulso));
+                    setAvulsoCustomizado(false);
+                  }
+                }}
+              />
+            </>
+          ) : null}
+          {resumoFinanceiro && valorQuadraCentavos !== null ? (
+            <>
+              <ResumoFinanceiro
+                resumo={resumoFinanceiro}
+                mostrarMensalistas={controlarMensalidade}
+                mostrarAvulsos={controlarAvulsos}
+              />
+              <CartaoSaldoDoMes
+                modo="previsao"
+                mensalistasCadastrados={quantidadeMensalistas ?? 0}
+                mensalistasMeta={quantidadeMensalistas ?? 0}
+                avulsosInformados={quantidadeAvulsos ?? 0}
+                mensalidadeCentavos={
+                  controlarMensalidade ? mensalidadeCalculadaCentavos ?? 0 : null
+                }
+                valorAvulsoCentavos={
+                  controlarAvulsos ? avulsoCalculadoCentavos ?? 0 : null
+                }
+                valorQuadraCentavos={valorQuadraCentavos}
+                diasSemana={agenda.diasSemana}
+                frequencia={agenda.frequencia}
+                mostrarMensalistas={controlarMensalidade}
+                mostrarAvulsos={controlarAvulsos}
+              />
+            </>
+          ) : null}
+        </View>
+      ) : null}
+      <View style={styles.opcionais}>
+        <View style={styles.grupo}>
+          <Texto variante="secao">Sorteio dos times (opcional)</Texto>
+          <CampoComRotulo rotulo="Jogadores por time" accessibilityLabel="Jogadores por time" valor={jogadoresPorTimeTexto} keyboardType="number-pad" mensagemErro={jogadoresPorTimeTexto.trim() && (inteiro(jogadoresPorTimeTexto) === null || inteiro(jogadoresPorTimeTexto)! < 2 || inteiro(jogadoresPorTimeTexto)! > 22) ? "Use um número de 2 a 22." : null} onChangeText={setJogadoresPorTimeTexto} />
+          <CampoComRotulo rotulo="Quantidade de times" accessibilityLabel="Quantidade de times" valor={quantidadeTimesTexto} keyboardType="number-pad" mensagemErro={quantidadeTimesTexto.trim() && (inteiro(quantidadeTimesTexto) === null || inteiro(quantidadeTimesTexto)! < 2 || inteiro(quantidadeTimesTexto)! > 12) ? "Use um número de 2 a 12." : null} onChangeText={setQuantidadeTimesTexto} />
+          <Texto variante="legenda">Se preencher, o sorteio da tela Seu futebol já abre com esses valores.</Texto>
+        </View>
       </View>
       {erroEdicao ? (
         <Texto variante="legenda" cor="error">
@@ -971,16 +978,21 @@ export default function CadastroFutebol() {
       >
         {modoEdicao ? (
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
             style={styles.edicaoLayout}
           >
             <ScrollView
-              contentContainerStyle={styles.edicaoConteudo}
+              contentContainerStyle={[styles.edicaoConteudo, { paddingBottom: spacing.xxxl * 2 }]}
               keyboardShouldPersistTaps="handled"
             >
               {formulario}
             </ScrollView>
             <View style={styles.rodape}>
+              {erroVencimento ? (
+                <Texto variante="legenda" cor="error">
+                  {erroVencimento}
+                </Texto>
+              ) : null}
               <Botao
                 variante="primario"
                 accessibilityLabel="Salvar alterações das informações do futebol"
@@ -994,29 +1006,23 @@ export default function CadastroFutebol() {
         ) : (
           <>
             {formulario}
-            <Botao
-              variante="primario"
-              accessibilityLabel="Continuar para cadastro de jogadores"
-              desabilitado={!valido}
-              onPress={continuar}
-            >
-              Continuar
-            </Botao>
+            <View style={styles.rodapeCriacao}>
+              {erroVencimento ? (
+                <Texto variante="legenda" cor="error">
+                  {erroVencimento}
+                </Texto>
+              ) : null}
+              <Botao
+                variante="primario"
+                accessibilityLabel="Continuar para cadastro de jogadores"
+                desabilitado={!valido}
+                onPress={continuar}
+              >
+                Continuar
+              </Botao>
+            </View>
           </>
         )}
-      <AgendaFutebolSheet
-        visivel={agendaVisivel}
-        diasSemana={diasSemana}
-        frequencia={frequencia}
-        horario={horario}
-        onSalvar={(dias, frequenciaNova, horarioNovo) => {
-          setDiasSemana(dias);
-          setFrequencia(frequenciaNova);
-          setHorario(horarioNovo);
-          setAgendaVisivel(false);
-        }}
-        onCancelar={() => setAgendaVisivel(false)}
-      />
       </TelaBase>
     </>
   );
@@ -1044,28 +1050,23 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.lg,
   },
+  rodapeCriacao: {
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xxl,
+  },
   grupo: {
     gap: spacing.md,
   },
   financeiro: {
     gap: spacing.lg,
   },
-  sugestao: {
-    alignItems: "center",
+  quadraEAgenda: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: radii.card,
     borderWidth: borders.surface,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.md,
-    justifyContent: "space-between",
+    gap: spacing.lg,
     padding: spacing.lg,
-  },
-  textoSugestao: {
-    flex: 1,
-    gap: spacing.xs,
-    minWidth: dimensions.optionMinWidth,
   },
   opcionais: {
     backgroundColor: colors.surface,

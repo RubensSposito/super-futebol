@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { StyleSheet, View } from "react-native";
-import { useRouter } from "expo-router";
+import { Alert, Pressable, StyleSheet, View } from "react-native";
+import { Stack, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { Botao, Texto } from "@/components/atoms";
 import {
@@ -15,9 +15,12 @@ import { obterDataLocal } from "@/lib/datas";
 import { lerListaJogadores } from "@/lib/importacao";
 import {
   criarFutebolDoRascunho,
+  useDadosPersistidosStore,
   useRascunhoCadastroStore,
+  usePartidaRapidaStore,
+  useSorteioStore,
 } from "@/store";
-import { spacing } from "@/theme";
+import { colors, radii, spacing } from "@/theme";
 import type {
   AvisoImportacao,
   Jogador,
@@ -73,7 +76,12 @@ export default function CadastroJogadores() {
   const editarJogador = useRascunhoCadastroStore(
     (state) => state.editarJogador,
   );
+  const excluirJogador = useRascunhoCadastroStore(
+    (state) => state.excluirJogador,
+  );
   const limparRascunho = useRascunhoCadastroStore((state) => state.limpar);
+  const carregarDadosHome = useDadosPersistidosStore((state) => state.carregar);
+
   const [formularioVisivel, setFormularioVisivel] = useState(false);
   const [importacaoVisivel, setImportacaoVisivel] = useState(false);
   const [nome, setNome] = useState("");
@@ -85,9 +93,11 @@ export default function CadastroJogadores() {
   const [erroNome, setErroNome] = useState<string | null>(null);
   const [erroFormulario, setErroFormulario] = useState<string | null>(null);
   const [erroCadastro, setErroCadastro] = useState<string | null>(null);
+  const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [avisoImportacao, setAvisoImportacao] =
     useState<AvisoImportacao | null>(null);
+
 
   function limparFormulario() {
     setNome("");
@@ -117,6 +127,28 @@ export default function CadastroJogadores() {
     setFormularioVisivel(true);
   }
 
+  function confirmarExclusaoJogador() {
+    if (!jogadorEmEdicao) return;
+    const jogador = jogadores.find((j) => j.id === jogadorEmEdicao);
+    const nomeJogador = jogador?.nome ?? nome;
+    Alert.alert(
+      "Excluir jogador?",
+      `Deseja remover “${nomeJogador}” da lista?`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir jogador",
+          style: "destructive",
+          onPress: () => {
+            excluirJogador(jogadorEmEdicao);
+            fecharFormulario();
+            setMensagemSucesso(`Jogador “${nomeJogador}” excluído.`);
+          },
+        },
+      ],
+    );
+  }
+
   function salvarJogador() {
     if (!futebol) return;
     const vinculoAplicavel = vinculoParaCadastro(futebol.tipoCadastro, vinculo);
@@ -143,6 +175,7 @@ export default function CadastroJogadores() {
     }
     setErroCadastro(null);
     setAvisoImportacao(null);
+    setMensagemSucesso(`Jogador ${nome} adicionado com sucesso!`);
     fecharFormulario();
   }
 
@@ -161,6 +194,8 @@ export default function CadastroJogadores() {
       linhasIgnoradas: leitura.linhasIgnoradas,
     });
     setErroCadastro(null);
+    const totalAdicionados = resultado.goleirosAdicionados + resultado.jogadoresAdicionados;
+    setMensagemSucesso(`✅ ${totalAdicionados} jogadores importados com sucesso!`);
     return true;
   }
 
@@ -175,13 +210,9 @@ export default function CadastroJogadores() {
     }
   }
 
-  async function concluir() {
+  async function salvarEIrParaHome() {
     if (!futebol) {
-      setErroCadastro("Configure os dados do futebol antes de continuar.");
-      return;
-    }
-    if (jogadores.length < 2) {
-      setErroCadastro("Cadastre pelo menos 2 jogadores.");
+      router.replace("/home");
       return;
     }
     setSalvando(true);
@@ -190,14 +221,52 @@ export default function CadastroJogadores() {
       criarFutebolDoRascunho(futebol, obterDataLocal()),
       jogadores.map(({ id: _id, ...jogador }) => jogador),
     );
-    setSalvando(false);
     if (!resultado.sucesso) {
+      setSalvando(false);
       setErroCadastro(resultado.mensagem);
       return;
     }
+    await carregarDadosHome(obterDataLocal(), resultado.dados);
+    usePartidaRapidaStore.getState().limpar();
+    useSorteioStore.getState().limpar();
+    setSalvando(false);
     router.dismissAll();
     router.replace("/home");
     limparRascunho();
+  }
+
+  async function irParaSeuFutebol() {
+    if (!futebol) {
+      router.replace("/home");
+      return;
+    }
+    if (jogadores.length < 2) {
+      Alert.alert(
+        "Acessar Seu Futebol",
+        "Você ainda tem menos de 2 jogadores cadastrados. Deseja ir para a tela principal agora? Você poderá cadastrar ou importar jogadores a qualquer momento por lá.",
+        [
+          { text: "Continuar cadastrando", style: "cancel" },
+          {
+            text: "Ir para Seu Futebol",
+            onPress: () => void salvarEIrParaHome(),
+          },
+        ],
+      );
+      return;
+    }
+    await salvarEIrParaHome();
+  }
+
+  async function concluir() {
+    if (!futebol) {
+      setErroCadastro("Configure os dados do futebol antes de continuar.");
+      return;
+    }
+    if (jogadores.length < 2) {
+      await irParaSeuFutebol();
+      return;
+    }
+    await salvarEIrParaHome();
   }
 
   if (!futebol) {
@@ -228,14 +297,15 @@ export default function CadastroJogadores() {
     futebol.controlePagamento === "avulsos" ||
     futebol.controlePagamento === "ambos";
 
-  return (
-    <TelaBase>
+  const cabecalhoSuperior = (
+    <View style={styles.cabecalhoSuperior}>
       <View style={styles.introducao}>
         <Texto variante="titulo">Cadastrar jogadores</Texto>
         <Texto variante="corpo">
-          Adicione manualmente ou importe uma lista para concluir a configuração.
+          Adicione manualmente ou importe sua lista do WhatsApp para concluir.
         </Texto>
       </View>
+
       <View style={styles.acoes}>
         <Botao
           variante="primario"
@@ -257,6 +327,15 @@ export default function CadastroJogadores() {
           Importar lista
         </Botao>
       </View>
+
+      {mensagemSucesso ? (
+        <View style={styles.avisoSucesso}>
+          <Texto variante="corpo" cor="primary" style={styles.textoSucesso}>
+            {mensagemSucesso}
+          </Texto>
+        </View>
+      ) : null}
+
       {futebol.tipoCadastro !== "basico" &&
       futebol.controlePagamento !== "nenhum" &&
       futebol.valorQuadraCentavos !== null ? (
@@ -276,33 +355,86 @@ export default function CadastroJogadores() {
               : null
           }
           valorQuadraCentavos={futebol.valorQuadraCentavos}
-          diasSemana={futebol.diasSemana}
-          frequencia={futebol.frequencia}
+          diasSemana={futebol.agenda.diasSemana}
+          frequencia={futebol.agenda.frequencia}
           mostrarMensalistas={controlarMensalistas}
           mostrarAvulsos={controlarAvulsos}
         />
       ) : null}
+    </View>
+  );
+
+  return (
+    <TelaBase contentStyle={styles.container}>
+      <Stack.Screen
+        options={{
+          title: "Jogadores",
+          headerRight: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Ir para tela Seu Futebol"
+              onPress={() => void irParaSeuFutebol()}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.botaoHeader,
+                pressed ? styles.botaoHeaderPressionado : null,
+              ]}
+            >
+              <Texto variante="corpo" cor="primary" style={styles.textoBotaoHeader}>
+                Seu futebol →
+              </Texto>
+            </Pressable>
+          ),
+        }}
+      />
+
       <ListaDeJogadores
+        cabecalhoSuperior={cabecalhoSuperior}
         jogadores={jogadores}
-        quantidade={jogadores.length}
-        quantidadeEsperada={futebol.quantidadeJogadores}
+        quantidade={
+          futebol.tipoCadastro === "basico"
+            ? jogadores.length
+            : mensalistasCadastrados
+        }
+        quantidadeEsperada={
+          futebol.tipoCadastro === "basico"
+            ? futebol.quantidadeJogadores
+            : (futebol.quantidadeMensalistas ?? 0)
+        }
+        contadorRotulo={
+          futebol.tipoCadastro === "basico" ? "Jogadores" : "Mensalistas"
+        }
         aviso={avisoImportacao}
         mostrarVinculo={futebol.tipoCadastro === "mensalistas_e_avulsos"}
         onEditar={iniciarEdicao}
       />
+
       {erroCadastro ? (
         <Texto variante="legenda" cor="error">
           {erroCadastro}
         </Texto>
       ) : null}
-      <Botao
-        variante="primario"
-        accessibilityLabel="Salvar configuração e concluir cadastro"
-        desabilitado={salvando}
-        onPress={() => void concluir()}
-      >
-        {salvando ? "Salvando..." : "Concluir cadastro"}
-      </Botao>
+
+      <View style={styles.rodapeFixo}>
+        <Botao
+          variante="primario"
+          accessibilityLabel="Salvar configuração e ir para Seu Futebol"
+          desabilitado={salvando}
+          onPress={() => void concluir()}
+        >
+          {salvando
+            ? "Salvando e abrindo Seu Futebol..."
+            : `Concluir e ir para Seu Futebol (${jogadores.length})`}
+        </Botao>
+        <Botao
+          variante="secundario"
+          accessibilityLabel="Ir diretamente para Seu Futebol"
+          onPress={() => void irParaSeuFutebol()}
+        >
+          Ir para Seu Futebol →
+        </Botao>
+      </View>
+
       <FormularioJogadorSheet
         visivel={formularioVisivel}
         modo={jogadorEmEdicao ? "edicao" : "criacao"}
@@ -327,6 +459,7 @@ export default function CadastroJogadores() {
         onVinculoChange={setVinculo}
         onSalvar={salvarJogador}
         onCancelar={fecharFormulario}
+        onExcluir={jogadorEmEdicao ? confirmarExclusaoJogador : undefined}
       />
       <ImportarListaSheet
         visivel={importacaoVisivel}
@@ -340,8 +473,16 @@ export default function CadastroJogadores() {
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    paddingBottom: spacing.sm,
+  },
+  cabecalhoSuperior: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
   introducao: {
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
   acoes: {
     flexDirection: "row",
@@ -351,5 +492,32 @@ const styles = StyleSheet.create({
   botao: {
     flexBasis: "48%",
     flexGrow: 1,
+  },
+  avisoSucesso: {
+    backgroundColor: colors.successBackground,
+    borderRadius: radii.sm,
+    padding: spacing.md,
+  },
+  textoSucesso: {
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  rodapeFixo: {
+    backgroundColor: colors.background,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    gap: spacing.xs,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  botaoHeader: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  botaoHeaderPressionado: {
+    opacity: 0.6,
+  },
+  textoBotaoHeader: {
+    fontWeight: "bold",
   },
 });

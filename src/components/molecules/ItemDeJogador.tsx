@@ -1,7 +1,9 @@
-import { StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { Jogador } from "@/types";
 import { NIVEIS, POSICOES, POSICAO_GOLEIRO, VINCULOS } from "@/constants";
-import { Alternador, Avatar, Botao, Selo, Texto } from "@/components/atoms";
+import { Avatar, Selo, Texto } from "@/components/atoms";
+import { CheckboxComRotulo } from "./CheckboxComRotulo";
 import {
   borders,
   colors,
@@ -17,8 +19,13 @@ type ItemDeJogadorProps = {
   onEdit?: () => void;
   presente?: boolean;
   onPresencaChange?: (presente: boolean) => void;
+  pago?: boolean;
+  onPagamentoChange?: (pago: boolean) => void;
   mostrarTipo?: boolean;
   mostrarVinculo?: boolean;
+  desabilitarPagamento?: boolean;
+  selecionado?: boolean;
+  onPress?: () => void;
 };
 
 export function ItemDeJogador({
@@ -27,8 +34,13 @@ export function ItemDeJogador({
   onEdit,
   presente,
   onPresencaChange,
-  mostrarTipo = true,
+  pago,
+  onPagamentoChange,
+  mostrarTipo = false,
   mostrarVinculo = true,
+  desabilitarPagamento = false,
+  selecionado = false,
+  onPress,
 }: ItemDeJogadorProps) {
   const posicao =
     jogador.posicao === "goleiro"
@@ -41,102 +53,176 @@ export function ItemDeJogador({
     ? VINCULOS.find((opcao) => opcao.value === jogador.vinculo)
     : undefined;
 
-  return (
-    <View style={styles.item}>
-      <Avatar jogador={jogador} />
-      <View style={styles.conteudo}>
-        <Texto
-          variante="corpo"
-          cor={ficticio ? "textSecondary" : "textPrimary"}
-          numberOfLines={2}
-          ellipsizeMode="tail"
-          style={ficticio ? [styles.nome, styles.ficticio] : styles.nome}
-        >
-          {jogador.nome}
-        </Texto>
-        <View style={styles.selos}>
-          {presente !== undefined ? (
-            <Selo tipo={presente ? "sucesso" : "neutro"}>
-              {presente ? "Confirmado ✓" : "Pendente"}
-            </Selo>
+  // Monta subtítulo limpo e elegante (ex: "Goleiro · Amador" ou "Zagueiro · Semi-profissional")
+  const partesSubtitulo: string[] = [];
+  if (jogador.tipo === "goleiro") {
+    partesSubtitulo.push("Goleiro");
+  } else if (posicao) {
+    partesSubtitulo.push(posicao.label);
+  } else if (mostrarTipo) {
+    partesSubtitulo.push("Linha");
+  }
+
+  if (nivel) {
+    partesSubtitulo.push(nivel.label);
+  }
+
+  const subtitulo = partesSubtitulo.join(" · ");
+
+  const conteudoCard = (
+    <View style={[styles.item, selecionado ? styles.itemSelecionado : null]}>
+      <View style={styles.cabecalho}>
+        <Avatar jogador={jogador} />
+        <View style={styles.conteudo}>
+          <Texto
+            variante="corpo"
+            cor={ficticio ? "textSecondary" : "textPrimary"}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={ficticio ? [styles.nome, styles.ficticio] : styles.nome}
+          >
+            {jogador.nome}
+          </Texto>
+          {subtitulo ? (
+            <Texto variante="legenda" cor="textSecondary" numberOfLines={1}>
+              {subtitulo}
+            </Texto>
           ) : null}
-          {mostrarTipo ? (
-            <Selo tipo={jogador.tipo}>
-              {jogador.tipo === "goleiro" ? "Goleiro" : "Linha"}
-            </Selo>
-          ) : null}
-          {posicao ? <Selo tipo="neutro">{posicao.label}</Selo> : null}
-          {nivel && jogador.nivel ? (
-            <Selo tipo={jogador.nivel}>{nivel.label}</Selo>
-          ) : null}
-          {mostrarVinculo && vinculo ? (
+        </View>
+
+        <View style={styles.ladoDireito}>
+          {selecionado ? (
+            <Selo tipo="sucesso">⇄ Trocar</Selo>
+          ) : mostrarVinculo && vinculo ? (
             <Selo tipo={vinculo.value}>{vinculo.label}</Selo>
+          ) : null}
+          {onEdit ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Editar jogador ${jogador.nome}`}
+              onPress={onEdit}
+              hitSlop={10}
+              style={({ pressed }) => [
+                styles.botaoEditar,
+                pressed ? styles.botaoEditarPressionado : null,
+              ]}
+            >
+              <Ionicons
+                name="pencil-outline"
+                size={18}
+                color={colors.textSecondary}
+              />
+            </Pressable>
           ) : null}
         </View>
       </View>
-      {onPresencaChange || onEdit ? (
-        <View style={styles.acoes}>
-          {onPresencaChange && presente !== undefined ? (
-            <Alternador
-              valor={presente}
-              rotuloAcessibilidade={`Presença de ${jogador.nome}`}
-              onChange={onPresencaChange}
-            />
-          ) : null}
-          {onEdit ? (
-            <Botao
-              variante="secundario"
-              accessibilityLabel={`Editar jogador ${jogador.nome}`}
-              onPress={onEdit}
-              style={styles.editar}
-            >
-              ✏️
-            </Botao>
-          ) : null}
-        </View>
+
+      {(onPresencaChange && presente !== undefined) ||
+      (onPagamentoChange && pago !== undefined) ? (
+        <>
+          <View style={styles.separadorAcoes} />
+          <View style={styles.acoes}>
+            {onPresencaChange && presente !== undefined ? (
+              <CheckboxComRotulo
+                rotulo="Presente"
+                marcado={presente}
+                accessibilityLabel={`Presença de ${jogador.nome}`}
+                onChange={onPresencaChange}
+              />
+            ) : null}
+            {onPagamentoChange && pago !== undefined ? (
+              <CheckboxComRotulo
+                rotulo={jogador.vinculo === "avulso" ? "Pago" : "Mensalidade"}
+                marcado={pago}
+                desabilitado={desabilitarPagamento}
+                accessibilityLabel={`${
+                  jogador.vinculo === "avulso"
+                    ? "Pagamento do jogo de"
+                    : "Mensalidade de"
+                } ${jogador.nome}`}
+                onChange={onPagamentoChange}
+              />
+            ) : null}
+          </View>
+        </>
       ) : null}
     </View>
   );
+
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Jogador ${jogador.nome}. Toque para selecionar ou trocar.`}
+        onPress={onPress}
+      >
+        {conteudoCard}
+      </Pressable>
+    );
+  }
+
+  return conteudoCard;
 }
 
 const styles = StyleSheet.create({
   item: {
-    alignItems: "center",
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: radii.card,
     borderWidth: borders.surface,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  itemSelecionado: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
+  cabecalho: {
+    alignItems: "center",
     flexDirection: "row",
     gap: spacing.md,
-    padding: spacing.lg,
+    minHeight: 44,
   },
   conteudo: {
     flex: 1,
-    gap: spacing.sm,
+    gap: 2,
+    justifyContent: "center",
   },
   nome: {
-    flexShrink: 1,
     fontWeight: typography.weights.bold,
   },
-  selos: {
+  ladoDireito: {
+    alignItems: "center",
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: spacing.sm,
+  },
+  botaoEditar: {
+    alignItems: "center",
+    backgroundColor: colors.neutralBackground,
+    borderRadius: radii.pill,
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  botaoEditarPressionado: {
+    opacity: 0.6,
+  },
+  separadorAcoes: {
+    backgroundColor: colors.border,
+    height: 1,
+    marginHorizontal: -spacing.lg,
+    marginTop: spacing.xs,
   },
   acoes: {
     alignItems: "center",
     flexDirection: "row",
-    flexShrink: 0,
-    gap: spacing.xs,
-    minHeight: dimensions.touchTarget,
-  },
-  editar: {
-    flexGrow: 0,
-    flexShrink: 0,
-    minWidth: dimensions.touchTarget,
-    paddingHorizontal: spacing.sm,
+    gap: spacing.xl,
+    paddingTop: spacing.xs,
   },
   ficticio: {
     fontStyle: "italic",
   },
 });
+

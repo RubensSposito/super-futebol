@@ -20,6 +20,7 @@ export default function RootLayout() {
           },
         }}
       >
+        <Stack.Screen name="futebols" options={{ headerShown: true, title: "Seus futebols", gestureEnabled: false }} />
         <Stack.Screen
           name="home"
           options={{
